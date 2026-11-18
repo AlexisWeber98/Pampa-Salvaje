@@ -36,7 +36,8 @@
 //!   afuera y hacia adelante ([`KNEE_POLE`]);
 //! - la mano izquierda sostiene ambas riendas (a la manera del gaucho, con la
 //!   derecha libre para el rebenque o el lazo) delante de la cabezada al paso
-//!   ([`REINS_HAND`]), sobre la cruz al galope ([`GALLOP_HAND`]), y sigue la
+//!   ([`REINS_HAND`]), sobre la cruz al galope, una rienda en cada mano
+//!   ([`GALLOP_HANDS`]), y sigue la
 //!   boca del caballo para que el contacto se mantenga parejo ([`FOLLOW`]): el
 //!   codo se abre cuando la cabeza va hacia adelante y hacia abajo. La mano
 //!   derecha descansa junto a su muslo ([`THIGH_HAND`]), suelta, balanceándose
@@ -125,8 +126,12 @@ pub const ANKLES: [Vec3; 2] = [Vec3::new(0.37, -0.69, 0.1), Vec3::new(-0.37, -0.
 
 /// Adónde van los tobillos en medio asiento: los estribos acortados un palmo
 /// (las aciones siguen a los pies) y los talones bajo las caderas, así que las
-/// rodillas se doblan unos 110°.
-pub const GALLOP_ANKLES: [Vec3; 2] = [Vec3::new(0.36, -0.6, 0.02), Vec3::new(-0.36, -0.6, 0.02)];
+/// rodillas se doblan unos 110°. On henry (H6): (0.36, -0.6, 0.02) ->
+/// (0.40, -0.52, 0.1), shorter, wider and under the knee: at 0.36 out the
+/// boots went 2.8 cm into the cojinillo, and at -0.6 the knees opened to
+/// ~135° (129° already on the old horse); now ~111-115°, the boots at most
+/// 1.4 cm into the wool (`FLEECE_GIVE` 2 cm).
+pub const GALLOP_ANKLES: [Vec3; 2] = [Vec3::new(0.40, -0.52, 0.1), Vec3::new(-0.40, -0.52, 0.1)];
 
 /// Adónde va la muñeca de la mano de las riendas (la izquierda: un gaucho monta
 /// con una sola mano, con ambas riendas en ella): delante de la cabezada, un
@@ -134,12 +139,17 @@ pub const GALLOP_ANKLES: [Vec3; 2] = [Vec3::new(0.36, -0.6, 0.02), Vec3::new(-0.
 /// ese hombro.
 pub const REINS_HAND: Vec3 = Vec3::new(0.12, 0.18, 0.32);
 
-/// Dónde descansa después de unos segundos quieto: sobre la cabezada.
-pub const POMMEL_HAND: Vec3 = Vec3::new(0.06, -0.02, 0.22);
+/// Dónde descansa después de unos segundos quieto: sobre la cabezada. Since
+/// H6 low in front, over the pommel rather than on it ((0.06, -0.02, 0.22)
+/// was out of the arm's reach: the arm locked straight and the forearm went
+/// into the belly).
+pub const POMMEL_HAND: Vec3 = Vec3::new(0.115, 0.125, 0.26);
 
 /// Dónde descansa la mano libre (la derecha): sobre su muslo, como si
-/// sostuviera un rebenque sin apretar, con el codo doblado unos 50°.
-pub const THIGH_HAND: Vec3 = Vec3::new(-0.2, 0.08, 0.1);
+/// sostuviera un rebenque sin apretar, con el codo doblado unos 50°. Since
+/// H6 3 cm further out and 2 cm forward ((-0.2, 0.08, 0.1)): sitting upright
+/// ([`SIT_UP`]) the upper arm brushed the side of the body.
+pub const THIGH_HAND: Vec3 = Vec3::new(-0.23, 0.08, 0.12);
 
 /// Adónde va, de vez en cuando, estando quieto: al ala del sombrero.
 pub const HAT_HAND: Vec3 = Vec3::new(-0.1, 0.62, 0.16);
@@ -164,6 +174,38 @@ pub const REF_ARM: f32 = 0.51243;
 pub fn fit_hand(target: Vec3, side: usize, (shoulder, arm): (Vec3, f32)) -> Vec3 {
     shoulder + (target - REF_SHOULDERS[side]) * (arm / REF_ARM)
 }
+
+/// `target` brought within `reach` (a share of the arm, see [`REACH`]) of an
+/// arm `arm` long whose shoulder is now at `shoulder`, along the line from
+/// the shoulder.
+pub fn within_reach(target: Vec3, shoulder: Vec3, arm: f32, reach: f32) -> Vec3 {
+    shoulder + (target - shoulder).clamp_length_max(reach * arm)
+}
+
+/// `hand` (model space) kept at least [`CHEST_CLEAR`] in front of the chest
+/// joint (`spine_03`, at `chest`) in the half-seat (`half`, `0..1`):
+/// following henry's mouth back at the gallop, the rein hand brought the
+/// forearm into the sternum.
+pub fn clear_of_chest(hand: Vec3, chest: Vec3, half: f32) -> Vec3 {
+    let clear = hand.z.max(chest.z + CHEST_CLEAR);
+    Vec3::new(hand.x, hand.y, hand.z + (clear - hand.z) * half)
+}
+
+/// How far in front of the chest joint the rein hand stays at least in the
+/// half-seat, in metres: the chest's depth in front of `spine_03` plus a
+/// forearm.
+pub const CHEST_CLEAR: f32 = 0.3;
+
+/// How far from the shoulder a hand goes at most, as a share of the arm's
+/// length (shoulder to wrist), sitting and in the half-seat: sitting, the
+/// elbow always keeps some bend instead of locking straight like a rod; in
+/// the half-seat the rein arm may stretch after henry's nodding head.
+pub const REACH: (f32, f32) = (0.9, 1.0);
+
+/// How much the rider sits up from the hips out of the half-seat, in radians:
+/// the sitting clip leans back about 7°, which put the shoulders behind the
+/// hips and the rein hand out of the arm's reach.
+pub const SIT_UP: f32 = 0.12;
 
 /// Cuánto se balancea como máximo la mano libre desde su reposo, en metros.
 pub const FREE_REACH: f32 = 0.12;
@@ -196,7 +238,9 @@ pub const LEAN_EASE: f32 = 4.0;
 /// montura para mantener la parte superior del cuerpo más estable que las
 /// caderas; una lenta compensaría la zancada anterior y, en cambio, haría
 /// hamacar al jinete.
-pub const COUNTER_EASE: f32 = 40.0;
+/// 40 -> 80 on henry (H6): at the gallop his back snaps 9° nose up in 40 ms
+/// once a stride, and at 40 the upper body kept ~70-90% of the saddle's pitch.
+pub const COUNTER_EASE: f32 = 80.0;
 /// La trayectoria suavizada del freno, cuyo resto absorbe la mano de las
 /// riendas.
 pub const BIT_EASE: f32 = 3.0;
@@ -227,7 +271,9 @@ pub const WALK_TOP: f32 = 4.5 / 3.6;
 pub const SHIFT: (f32, u32, f32) = (7.0, 3, 0.035);
 
 /// Cuánto cede como máximo la mano de las riendas con el freno, en metros.
-pub const GIVE_MAX: f32 = 0.12;
+/// 0.12 -> 0.25 on henry (H6): his bit travels 0.33 m up and down and 0.18 m
+/// fore and aft against the rider at full gallop.
+pub const GIVE_MAX: f32 = 0.25;
 
 /// Cuánto se arquea o se hunde como máximo la espalda, en radianes.
 pub const FLEX_MAX: f32 = 0.12;
@@ -250,10 +296,16 @@ pub const FREE_BRAKE: f32 = 0.45;
 pub const HAT_SALT: u32 = 0x5eed;
 pub const HAT_PACE: f32 = 0.4;
 
-/// La mirada más amplia que da `pampa_core::pose::glance`, en radianes (0.3 +
-/// 0.25): una mirada así de amplia es todo el camino hasta el ala del sombrero.
-/// Acoplado a esa función.
-pub const GLANCE_MAX: f32 = 0.55;
+/// How far the free (right) hand's wrist and fingers go from the reins clip's
+/// fist towards their rest while it holds no rein: a loose, half-open hand.
+pub const LOOSE_HAND: f32 = 0.8;
+
+/// Over which part of a glance's size (`pampa_core::pose::glance`, at least
+/// 0.3) the free hand goes from the thigh to the brim: every touch reaches the
+/// brim, rising over the glance's first few tenths of a second instead of its
+/// whole slow ramp.
+pub const HAT_FROM: f32 = 0.2;
+pub const HAT_TO: f32 = 0.3;
 
 /// Hacia dónde se doblan las rodillas, primero la izquierda y después la
 /// derecha: hacia adelante y tan afuera como adelante, alrededor del recado.
@@ -281,13 +333,22 @@ pub const HALF_SEAT: Vec3 = Vec3::new(0.0, 0.06, 0.1);
 /// asiento baja sobre los estribos).
 pub const HEEL: f32 = 0.2;
 
-/// Adónde va la mano de las riendas en medio asiento: adelante sobre la cruz y
-/// un poco por encima, sin tocar el cuello del caballo.
-pub const GALLOP_HAND: Vec3 = Vec3::new(0.04, 0.22, 0.4);
+/// Where the hands go in the half-seat, the left first: at the gallop the
+/// rider takes the reins in both hands (S9), each rein in its own hand, either
+/// side of the crest a little apart, forward over the withers and a little
+/// above them, clear of the horse's neck. Since H6 (one hand at
+/// (0.04, 0.22, 0.4) before).
+pub const GALLOP_HANDS: [Vec3; 2] = [Vec3::new(0.09, 0.22, 0.3), Vec3::new(-0.09, 0.22, 0.3)];
+
+/// How far the right hand meets the left one, in the rider's space, while it
+/// comes to take its rein going into the half-seat (and leaves it coming out):
+/// a hand's width to its right.
+pub const MEET: Vec3 = Vec3::new(-0.06, 0.0, 0.0);
 
 /// Cuánto del movimiento del freno sigue la mano de las riendas, al paso y en
-/// medio asiento: el contacto se mantiene parejo.
-pub const FOLLOW: (f32, f32) = (0.35, 0.85);
+/// medio asiento: el contacto se mantiene parejo. In the half-seat 0.85 ->
+/// 1.0 on henry (H6), whose head nods far more than the old horse's.
+pub const FOLLOW: (f32, f32) = (0.35, 1.0);
 
 /// Cuánto del cabeceo y del rolido de la montura (más allá de su trayectoria
 /// suavizada) compensa la columna, para que la parte superior del cuerpo se
@@ -304,7 +365,10 @@ pub const JUMP_FOLD: f32 = 0.4;
 /// Adónde va la mano de las riendas sobre un salto, además de donde ya está:
 /// hacia adelante y hacia abajo a lo largo del cuello del caballo, dándole
 /// rienda (una cesión sobre la crin), en metros con el pliegue completo.
-pub const JUMP_HAND: Vec3 = Vec3::new(0.0, -0.06, 0.16);
+/// On henry (H6) 0.16 -> 0.2 m forward, and the hand stops following the mouth
+/// while folded: his head comes up and back over the top, and the hand went
+/// only 7 cm forward along the horse (the old horse: 24 cm).
+pub const JUMP_HAND: Vec3 = Vec3::new(0.0, -0.06, 0.2);
 
 /// Cuánto del cabeceo del caballo sobre un salto (desde que dejó el suelo)
 /// absorbe el jinete en las caderas: la parte superior de su cuerpo mantiene el
@@ -449,6 +513,15 @@ pub struct Seated {
     /// A qué altura sobre la suela está el hueso de la almohadilla de cada pie
     /// (`ball`), primero el izquierdo, medido parado en reposo.
     pub ball_rise: [f32; 2],
+    /// Each clavicle's turn under `spine_03` standing at rest, the left first:
+    /// the reins clip pulls the shoulders ~8 cm back and up behind the neck,
+    /// so [`pose_riders`] sets them back to rest before shrugging them.
+    pub clavicles: [Quat; 2],
+    /// The free (right) hand's turn under its forearm and each of its finger
+    /// bones' turn under its parent, standing at rest: the reins clip closes
+    /// both hands in a fist, so [`pose_riders`] opens the free one towards
+    /// its rest ([`LOOSE_HAND`]) while it holds no rein.
+    pub loose: (Quat, Vec<(Entity, Quat)>),
 }
 
 impl Seated {
@@ -472,6 +545,8 @@ impl Seated {
             bones,
             stirrups: [Transform::IDENTITY; 2],
             ball_rise: [0.0; 2],
+            clavicles: [Quat::IDENTITY; 2],
+            loose: (Quat::IDENTITY, Vec::new()),
         };
         // En el espacio propio del modelo, parado en reposo.
         let to_model = rest(root).inverse();
@@ -488,9 +563,33 @@ impl Seated {
         });
         // Parado en reposo, el origen del modelo está en el piso.
         let ball_rise = [0, 1].map(|s| at(Bone::Ball(s)).translation.y);
+        let chest = at(Bone::Spine3).inverse();
+        let clavicles = [0, 1].map(|s| {
+            let (_, turn, _) = (chest * at(Bone::Clavicle(s))).to_scale_rotation_translation();
+            turn
+        });
+        let local = |parent: Affine3A, child: Affine3A| {
+            let (_, turn, _) = (parent.inverse() * child).to_scale_rotation_translation();
+            turn
+        };
+        let wrist = local(at(Bone::LowerArm(1)), at(Bone::Hand(1)));
+        let mut fingers = Vec::new();
+        for finger in ["thumb", "index", "middle", "ring", "pinky"] {
+            let mut parent = at(Bone::Hand(1));
+            for k in 1..=3 {
+                let Some(bone) = named(&format!("{finger}_0{k}_r")) else {
+                    break;
+                };
+                let place = to_model * rest(bone);
+                fingers.push((bone, local(parent, place)));
+                parent = place;
+            }
+        }
         Some(Self {
             stirrups,
             ball_rise,
+            clavicles,
+            loose: (wrist, fingers),
             ..seated
         })
     }
@@ -660,6 +759,9 @@ pub struct RiderMotion {
     /// Qué tan plegado hacia adelante está sobre un salto (`0..1`), acercándose
     /// suavemente.
     pub fold: Spring,
+    /// Whether both hands hold the reins (the half-seat), the right rein in the
+    /// right hand.
+    pub two_hands: bool,
     /// Si el caballo estaba en el aire en el frame anterior.
     pub flying: bool,
     /// Cuánto tiempo pasó desde que aterrizó el caballo, en segundos (nada una
@@ -696,6 +798,9 @@ pub struct Saddle {
     pub torso: Vec<Entity>,
     pub head: Vec<Entity>,
     pub bit: Vec3,
+    /// The `Torso` bone's turn at rest in the body frame: the saddle's level
+    /// ([`saddle_attitude`]).
+    pub rest: Quat,
 }
 
 /// La ubicación del último elemento de `chain` (desde la raíz del modelo del
@@ -723,14 +828,17 @@ fn turn_bone(transforms: &mut Bones, parent: Place, bone: Entity, turn: Quat) {
     }
 }
 
-/// El cabeceo de la montura (positivo con la nariz hacia arriba) y su rolido
-/// (positivo con su lado derecho hacia arriba), en radianes, a partir del giro
-/// del hueso `Torso` en el marco del cuerpo del caballo: el hueso recorre su
-/// propio +Y hacia el frente del caballo, y su +X hacia la derecha del caballo.
-pub fn saddle_attitude(tilt: Quat) -> (f32, f32) {
+/// The saddle's pitch (positive nose up) and roll (positive right side up),
+/// in radians, from the `Torso` bone's turn in the horse's body frame (`tilt`)
+/// and its turn at rest (`rest`, where the rider sat down): measured on the
+/// body's own axes (+X forward, +Z the horse's right), so it does not depend
+/// on how the bone's own axes run (henry's `Spine_01` runs its +Y forward, its
+/// +X to the horse's left and its +Z down).
+pub fn saddle_attitude(tilt: Quat, rest: Quat) -> (f32, f32) {
+    let turn = tilt * rest.inverse();
     (
-        (tilt * Vec3::Y).y.clamp(-1.0, 1.0).asin(),
-        (tilt * Vec3::X).y.clamp(-1.0, 1.0).asin(),
+        (turn * Vec3::X).y.clamp(-1.0, 1.0).asin(),
+        (turn * Vec3::Z).y.clamp(-1.0, 1.0).asin(),
     )
 }
 
@@ -858,6 +966,7 @@ pub(super) fn pose_riders(
     time: Res<Time>,
     clips: Option<Res<CharacterClips>>,
     horses: Query<(&HorseBody, &Saddle)>,
+    (tacks, mut straps): (Query<&Tack>, Query<&mut Strap>),
     mut riders: Query<Sitter>,
     (parents, risers, gazes): (Query<&ChildOf>, Query<&Rising>, Query<&Gaze>),
     mut transforms: Bones,
@@ -916,7 +1025,7 @@ pub(super) fn pose_riders(
         let (_, tilt, _) = torso.to_scale_rotation_translation();
         // La altura del asiento (donde se apoya la pelvis), y el cabeceo y el
         // rolido de la montura.
-        let (saddle_pitch, saddle_roll) = saddle_attitude(tilt);
+        let (saddle_pitch, saddle_roll) = saddle_attitude(tilt, saddle.rest);
         let now = [rider.translation.y, saddle_pitch, saddle_roll];
         let head = chain_affine(&saddle.head, &transforms);
         let bit = rider
@@ -956,8 +1065,8 @@ pub(super) fn pose_riders(
             off[k] = now[k] - smooth;
         }
         // Sobre un salto mantiene el equilibrio cabecee como cabecee el
-        // caballo: su cabeceo desde que dejó el suelo (el hueso `Torso` recorre
-        // su propio +Y, hacia adelante) se absorbe en las caderas, entrando y
+        // caballo: su cabeceo desde que dejó el suelo (ver [`saddle_attitude`])
+        // se absorbe en las caderas, entrando y
         // saliendo de forma gradual.
         let level = if jumping > 0.0 {
             m.level.value
@@ -994,12 +1103,16 @@ pub(super) fn pose_riders(
         let half = m.half.step(gallop, HALF_SEAT_EASE, dt).clamp(0.0, 1.0);
         let walking = (horse.speed / WALK_TOP).min(1.0) * (1.0 - gallop);
         let lean = m.lean.step(
-            LEAN.0 * half + LEAN.1 * walking - LEAN.2 * braking,
+            LEAN.0 * half + LEAN.1 * walking - LEAN.2 * braking + SIT_UP * (1.0 - half),
             LEAN_EASE,
             dt,
         ) + JUMP_FOLD * fold
             - LANDING_GIVE.0 * give
-            + balance;
+            + balance
+            // Balanced over his own feet, not over the saddle: the saddle's
+            // smoothed pitch (henry's gallop carries the back ~8° nose down)
+            // is taken back at the hips; its quick nods go to the spine.
+            + level;
         // Sobre un salto las caderas absorben el cabeceo (`balance`), no la
         // columna.
         let counter_pitch = m.counter[0].step(COUNTER.0 * pitch * (1.0 - poise), COUNTER_EASE, dt);
@@ -1118,20 +1231,53 @@ pub(super) fn pose_riders(
         // hacia abajo); la mano libre descansa junto al muslo, acompañando al
         // asiento.
         let follow = FOLLOW.0 + (FOLLOW.1 - FOLLOW.0) * half;
-        let slack = slack.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest);
-        let reins = REINS_HAND.lerp(GALLOP_HAND, half).lerp(POMMEL_HAND, rest) + JUMP_HAND * fold;
+        // Folded over a jump the hand gives rein along the crest
+        // ([`JUMP_HAND`]) instead of following the mouth: henry lifts his head
+        // up and back over the top, and following it would pull the hand back.
+        let slack = slack.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest) * (1.0 - fold);
+        let reins = REINS_HAND
+            .lerp(GALLOP_HANDS[0], half)
+            .lerp(POMMEL_HAND, rest);
         let free = free_hand(
             &mut m,
             (rise, pitch, roll),
             (walking, gallop, braking, rest),
             dt,
         );
-        let hands = [reins + slack, seat + free];
+        // Going into the half-seat the right hand comes to the left one and
+        // takes its rein (half way in), then both part to either side of the
+        // crest; coming out, the other way round.
+        let meet = REINS_HAND.lerp(GALLOP_HANDS[0], 0.5) + MEET;
+        let right = if half < 0.5 {
+            (seat + free).lerp(meet, half * 2.0)
+        } else {
+            meet.lerp(GALLOP_HANDS[1], half * 2.0 - 1.0)
+        };
+        // Over a jump both hands give rein forward along the crest.
+        let release = slack + JUMP_HAND * fold;
+        let hands = [
+            reins + release,
+            right + release * (2.0 * half - 1.0).max(0.0),
+        ];
+        // The right rein in the right hand once both hands are on the reins.
+        if let (Ok(tack), true) = (tacks.get(riding.horse), m.two_hands != (half > 0.5)) {
+            m.two_hands = half > 0.5;
+            if let Ok(mut rein) = straps.get_mut(tack.reins[1]) {
+                rein.ends[1] = if m.two_hands {
+                    (seated.bone(Bone::Hand(1)), PALM)
+                } else {
+                    (seated.bone(Bone::Hand(0)), PALM + Vec3::X * 0.012)
+                };
+            }
+        }
         // Los hombros acompañan al torso, con retraso: hacia arriba cuando la
         // montura baja, hacia adelante cuando cabecea hacia abajo.
         let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), SHRUG_EASE, dt);
         for s in 0..2 {
             let side = if s == 0 { 1.0 } else { -1.0 };
+            if let Ok(mut t) = transforms.get_mut(seated.bone(Bone::Clavicle(s))) {
+                t.rotation = seated.clavicles[s];
+            }
             turn_bone(
                 &mut transforms,
                 chest,
@@ -1158,9 +1304,25 @@ pub(super) fn pose_riders(
                 &mut transforms,
                 shoulder,
                 arm,
-                fit_hand(hands[s], s, fit),
+                within_reach(
+                    clear_of_chest(fit_hand(hands[s], s, fit), chest.translation, half),
+                    shoulder.then(&upper).translation,
+                    fit.1,
+                    REACH.0 + (REACH.1 - REACH.0) * half,
+                ),
                 ELBOW_POLE[s],
             );
+        }
+        // The free hand opens out of the reins clip's fist, closing again as
+        // it comes to take the right rein going into the half-seat.
+        let open = LOOSE_HAND * (1.0 - 2.0 * half).clamp(0.0, 1.0);
+        let (wrist, fingers) = &seated.loose;
+        for (bone, rest) in std::iter::once((seated.bone(Bone::Hand(1)), wrist))
+            .chain(fingers.iter().map(|(bone, rest)| (*bone, rest)))
+        {
+            if let Ok(mut t) = transforms.get_mut(bone) {
+                t.rotation = t.rotation.slerp(*rest, open);
+            }
         }
     }
 }
@@ -1186,8 +1348,12 @@ pub fn free_hand(
     );
     let swing = stride * (FREE_WALK * walking + gallop);
     let brake = (POMMEL_HAND - THIGH_HAND) * FREE_BRAKE * braking;
-    let brim = (pampa_core::pose::glance(m.seed ^ HAT_SALT, m.clock * HAT_PACE).abs() / GLANCE_MAX)
-        .min(1.0);
+    // All the way to the brim or not at all: scaled by the glance's amount
+    // (0.3-0.55 of the widest) the hand often stopped half way, a fist
+    // held in front of the chest for seconds, and rose over its slow ramp.
+    let glance = pampa_core::pose::glance(m.seed ^ HAT_SALT, m.clock * HAT_PACE).abs();
+    let up = ((glance - HAT_FROM) / (HAT_TO - HAT_FROM)).clamp(0.0, 1.0);
+    let brim = up * up * (3.0 - 2.0 * up);
     let hat = (HAT_HAND - THIGH_HAND) * brim * rest;
     let target = THIGH_HAND + (swing + brake).clamp_length_max(FREE_REACH) + hat;
     // Con retraso respecto del torso: un brazo suelto, nunca rígido, nunca
@@ -1226,6 +1392,7 @@ pub(super) fn spawn_riders(
             torso: chain(tack.torso),
             head: chain(tack.head),
             bit: tack.bit,
+            rest: tack.torso_rest.to_scale_rotation_translation().1,
         });
         let model = body
             .rider
@@ -1436,22 +1603,69 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn standing_the_free_hand_goes_all_the_way_to_the_brim_or_stays_on_the_thigh() {
+        // Two minutes standing still, for a few riders: the hand is either
+        // near the thigh, near the brim, or quickly on its way between them,
+        // never held half way up in front of the chest.
+        let dt = 0.02;
+        let (mut mid, mut up) = (0, 0);
+        for seed in 0..12 {
+            let mut m = RiderMotion {
+                seed,
+                free: THIGH_HAND.to_array().map(Spring::at),
+                ..default()
+            };
+            for frame in 0..6000 {
+                m.clock = frame as f32 * dt;
+                let hand = free_hand(&mut m, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), dt);
+                let way = (hand.y - THIGH_HAND.y) / (HAT_HAND.y - THIGH_HAND.y);
+                if way > 0.9 {
+                    up += 1;
+                } else if way > 0.2 {
+                    mid += 1;
+                }
+            }
+        }
+        assert!(up > 0, "never touched the brim");
+        assert!(mid * 4 < up, "half way up {mid} frames, at the brim {up}");
+    }
+
+    #[test]
+    fn in_the_half_seat_the_hands_stay_well_in_front_of_the_chest() {
+        let chest = Vec3::new(0.0, 0.3, 0.1);
+        let near = Vec3::new(0.1, 0.2, 0.25);
+        // Sitting, where the hand goes is left alone.
+        assert_eq!(clear_of_chest(near, chest, 0.0), near);
+        // In the half-seat, pushed forward to the clearance, only forward.
+        let held = clear_of_chest(near, chest, 1.0);
+        assert!((held - Vec3::new(0.1, 0.2, 0.1 + CHEST_CLEAR)).length() < 1e-6);
+        let far = Vec3::new(0.1, 0.2, 0.6);
+        assert_eq!(clear_of_chest(far, chest, 1.0), far);
+        // Half way in, half way there.
+        let mid = clear_of_chest(near, chest, 0.5).z;
+        assert!((mid - (0.25 + held.z) / 2.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn the_saddle_pitches_with_the_horses_nose_and_rolls_with_its_sides() {
-        // El hueso `Torso` en reposo: recorre su propio +Y hacia el frente del
-        // caballo (+X), su +X hacia la derecha del caballo (+Z), y su +Z hacia
-        // arriba.
-        let rest = Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y));
-        for angle in [-0.4f32, -0.1, 0.1, 0.4] {
-            // La nariz hacia arriba (alrededor del eje lateral del cuerpo, +Z)
-            // es solo un cabeceo.
-            let (pitch, roll) = saddle_attitude(Quat::from_rotation_z(angle) * rest);
-            assert!((pitch - angle).abs() < 1e-4, "{angle}: pitch {pitch}");
-            assert!(roll.abs() < 1e-4, "{angle}: roll {roll}");
-            // El lado derecho hacia arriba (alrededor del eje longitudinal del
-            // cuerpo, +X), solo un rolido.
-            let (pitch, roll) = saddle_attitude(Quat::from_rotation_x(-angle) * rest);
-            assert!(pitch.abs() < 1e-4, "{angle}: pitch {pitch}");
-            assert!((roll - angle).abs() < 1e-4, "{angle}: roll {roll}");
+        // The `Torso` bone at rest, whatever its own axes: the old horse's ran
+        // its +Y forward (+X), its +X to the right (+Z) and its +Z up; henry's
+        // `Spine_01` runs its +Y forward, its +X to the left (-Z) and its +Z
+        // down.
+        for rest in [
+            Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y)),
+            Quat::from_mat3(&Mat3::from_cols(Vec3::NEG_Z, Vec3::X, Vec3::NEG_Y)),
+        ] {
+            for angle in [-0.4f32, -0.1, 0.1, 0.4] {
+                // Nose up (about the body's lateral axis, +Z) is only a pitch.
+                let (pitch, roll) = saddle_attitude(Quat::from_rotation_z(angle) * rest, rest);
+                assert!((pitch - angle).abs() < 1e-4, "{angle}: pitch {pitch}");
+                assert!(roll.abs() < 1e-4, "{angle}: roll {roll}");
+                // Right side up (about the body's long axis, +X), only a roll.
+                let (pitch, roll) = saddle_attitude(Quat::from_rotation_x(-angle) * rest, rest);
+                assert!(pitch.abs() < 1e-4, "{angle}: pitch {pitch}");
+                assert!((roll - angle).abs() < 1e-4, "{angle}: roll {roll}");
+            }
         }
     }
 
@@ -1546,9 +1760,9 @@ pub(crate) mod tests {
     // --- con el caballo y el jinete incluidos --------------------------------
 
     use crate::character::cpu;
-    use crate::character::horse::tests::{named, ride, saddled_every};
+    use crate::character::horse::tests::{named, ride, saddled_every, try_named};
     use crate::character::tack::tests::{horse_skin, signed_distance};
-    use crate::character::tack::{HorsePiece, Strap, Tack};
+    use crate::character::tack::{HorseBone, HorsePiece, Strap, Tack};
     use crate::character::{CharacterVisual, Coat, FigureKind, HorseModel, Rig};
 
     /// [`saddled_every`] con un jinete, que vuelve cuando el jinete también
@@ -1673,7 +1887,10 @@ pub(crate) mod tests {
             (riding.horse, riding.kind),
             (carrier, FigureKind::Protagonist)
         );
-        assert_eq!(world.get::<Name>(seat.parent()).unwrap().as_str(), "Torso");
+        assert_eq!(
+            world.get::<Name>(seat.parent()).unwrap().as_str(),
+            HorseBone::Torso.name()
+        );
         // Las riendas van hasta sus manos y los estribos están en sus pies.
         let tack = *world.get::<Tack>(carrier).unwrap();
         for s in 0..2 {
@@ -1785,7 +2002,7 @@ pub(crate) mod tests {
             let model = named(world, carrier, "Rider model");
             let [pelvis, neck, hand] =
                 ["pelvis", "neck_01", "hand_l"].map(|n| named(world, model, n));
-            let torso = named(world, carrier, "Torso");
+            let torso = named(world, carrier, HorseBone::Torso.name());
             let g = |e: Entity| *world.get::<GlobalTransform>(e).unwrap();
             let body = g(carrier).affine().inverse();
             let back = body.transform_vector3(g(neck).translation() - g(pelvis).translation());
@@ -1803,7 +2020,7 @@ pub(crate) mod tests {
             let world = app.world();
             let model = named(world, carrier, "Rider model");
             let [torso, pelvis] = [
-                named(world, carrier, "Torso"),
+                named(world, carrier, HorseBone::Torso.name()),
                 named(world, model, "pelvis"),
             ];
             let g = |e: Entity| world.get::<GlobalTransform>(e).unwrap().affine();
@@ -1829,7 +2046,9 @@ pub(crate) mod tests {
             fly(&mut app, None);
         }
         let mut ground = Vec::new();
-        for _ in 0..40 {
+        // Two whole strides (henry gallops at 12.2 m/s in ~0.48 s, 24 frames):
+        // a mean over a stride and a half depends on where it starts.
+        for _ in 0..48 {
             fly(&mut app, None);
             ground.push(measure(&app));
         }
@@ -1870,7 +2089,11 @@ pub(crate) mod tests {
             leans.iter().all(|l| (lean + 12.0..lean + 35.0).contains(l)),
             "{leans:?} vs {lean}"
         );
-        assert!(mean(top, 2) > reach + 0.1, "{} vs {reach}", mean(top, 2));
+        // 0.1 -> 0.02 m (H6, L35-L38): at the gallop the hands already stay
+        // 0.3 m in front of the chest, and with both on the reins (S9) the
+        // left one starts further out, so they have less forward to go
+        // (measured +0.03..+0.09 m).
+        assert!(mean(top, 2) > reach + 0.02, "{} vs {reach}", mean(top, 2));
         // Enderezándose para aterrizar, y después siguiendo en medio asiento.
         assert!(sitting < lean - 6.0, "{sitting} vs {lean}");
         assert!((mean(&landing[60..], 0) - lean).abs() < 4.0);
@@ -1887,7 +2110,9 @@ pub(crate) mod tests {
             coat: Coat::Bayo,
         };
         let (mut app, me) = seated_every(rider, 12.2, 20);
-        for _ in 0..80 {
+        // Until the half-seat has fully come in (`HALF_SEAT_EASE`): still
+        // settling, the lean drifts a couple of degrees from stride to stride.
+        for _ in 0..160 {
             app.update();
         }
         let carrier = app.world().get::<Children>(me).unwrap()[0];
@@ -1904,7 +2129,8 @@ pub(crate) mod tests {
             // Ubicados de nuevo en cada frame: una escena creada otra vez tiene
             // huesos nuevos.
             let model = named(world, carrier, "Rider model");
-            let [torso, horse_head] = ["Torso", "Head"].map(|n| named(world, carrier, n));
+            let [torso, horse_head] =
+                [HorseBone::Torso, HorseBone::Head].map(|b| named(world, carrier, b.name()));
             let [pelvis, thigh, calf, foot, head, upper, lower, hand, neck] = [
                 "pelvis",
                 "thigh_l",
@@ -2014,7 +2240,10 @@ pub(crate) mod tests {
         // La mano de las riendas mantiene un contacto parejo: sigue la boca,
         // con el codo abriéndose cuando la cabeza va hacia adelante y
         // cerrándose cuando vuelve.
-        assert!(spread(&reach) < 0.08, "hand to bit {}", spread(&reach));
+        // 0.08 -> 0.17 m (H6, L35-L38): henry's head nods 0.33 m, and the
+        // hands do not follow it back into the rider's chest (measured
+        // 0.094-0.150 m with both hands on the reins).
+        assert!(spread(&reach) < 0.17, "hand to bit {}", spread(&reach));
         let n = elbow.len() as f32;
         let (me_, mm) = (elbow.iter().sum::<f32>() / n, mouth.iter().sum::<f32>() / n);
         let cov: f32 = elbow
@@ -2025,6 +2254,242 @@ pub(crate) mod tests {
         let var = |v: &[f32], m: f32| v.iter().map(|x| (x - m) * (x - m)).sum::<f32>().sqrt();
         let corr = cov / (var(&elbow, me_) * var(&mouth, mm)).max(1e-9);
         assert!(corr > 0.3, "the elbow follows the mouth: {corr}");
+    }
+
+    /// The rider model on `carrier`, once its scene (maybe being created again
+    /// in parallel runs) has its bones: riding on at `speed` until then.
+    fn posed_model(app: &mut App, me: Entity, carrier: Entity, speed: f32) -> Entity {
+        loop {
+            let world = app.world();
+            if let Some(m) = try_named(world, carrier, "Rider model")
+                .filter(|m| try_named(world, *m, "hand_l").is_some())
+            {
+                return m;
+            }
+            ride(app, me, speed);
+        }
+    }
+
+    /// How far the bone lines of the rein arm (the left) and of the free arm
+    /// keep outside the rider's body (its torso's skin and clothes, only where
+    /// no arm or leg bone carries them), each as its upper arm (from a third
+    /// down: its top sits in the shoulder) and its forearm (to the wrist), in
+    /// metres; below zero, inside. The bone line runs along the middle of the
+    /// arm: a sleeve's width (~2-3 cm) is touching.
+    fn arms_off_the_body(app: &mut App, model: Entity) -> ([f32; 2], [f32; 2]) {
+        let drawn = cpu::drawn(app.world_mut(), Some(model));
+        let world = app.world();
+        const LIMBS: [&str; 12] = [
+            "arm", "hand", "thumb", "index", "middle", "ring", "pinky", "clavicle", "thigh",
+            "calf", "foot", "ball",
+        ];
+        let limb = |e: Option<Entity>| {
+            e.and_then(|e| world.get::<Name>(e))
+                .is_some_and(|n| LIMBS.iter().any(|k| n.as_str().contains(k)))
+        };
+        const TORSO: [&str; 5] = ["m021_body", "shirt", "waistcoat", "sash", "bombacha"];
+        let (mut body, mut tris) = (Vec::new(), Vec::new());
+        for d in drawn.iter().filter(|d| TORSO.contains(&d.name.as_str())) {
+            let base = body.len() as u32;
+            body.extend(&d.positions);
+            tris.extend(
+                d.triangles
+                    .iter()
+                    .filter(|t| t.iter().all(|i| !limb(d.strongest[*i as usize])))
+                    .map(|t| t.map(|i| i + base)),
+            );
+        }
+        let at = |b: &str| {
+            world
+                .get::<GlobalTransform>(named(world, model, b))
+                .unwrap()
+                .translation()
+        };
+        let [rein, free] = ["l", "r"].map(|side| {
+            let [a, b, c] = ["upperarm", "lowerarm", "hand"].map(|n| at(&format!("{n}_{side}")));
+            let gap = |from: Vec3, to: Vec3, start: f32| {
+                (0..=10)
+                    .map(|k| from.lerp(to, start + (1.0 - start) * k as f32 / 10.0))
+                    .map(|q| signed_distance(q, &body, &tris))
+                    .fold(f32::MAX, f32::min)
+            };
+            [gap(a, b, 0.3), gap(b, c, 0.0)]
+        });
+        (rein, free)
+    }
+
+    /// Where the head sits from the middle of the shoulders (the upper arm
+    /// joints), in the chest's own frame (`spine_03`): posed under `model`, or
+    /// standing at rest in the protagonist's glTF.
+    fn head_from_shoulders(world: &World, model: Entity) -> Vec3 {
+        let at = |b: &str| {
+            *world
+                .get::<GlobalTransform>(named(world, model, b))
+                .unwrap()
+        };
+        let mid = (at("upperarm_l").translation() + at("upperarm_r").translation()) / 2.0;
+        at("spine_03")
+            .affine()
+            .inverse()
+            .transform_vector3(at("head").translation() - mid)
+    }
+
+    fn rest_head_from_shoulders() -> Vec3 {
+        let doc = crate::character::model::tests::shipped_model("protagonist");
+        let mut parent = std::collections::HashMap::new();
+        for n in doc.nodes() {
+            for c in n.children() {
+                parent.insert(c.index(), n.index());
+            }
+        }
+        let at = |name: &str| {
+            let mut at = doc
+                .nodes()
+                .find(|n| n.name() == Some(name))
+                .map(|n| n.index());
+            let mut m = Mat4::IDENTITY;
+            while let Some(k) = at {
+                let (t, r, s) = doc.nodes().nth(k).unwrap().transform().decomposed();
+                m = Mat4::from_scale_rotation_translation(s.into(), Quat::from_array(r), t.into())
+                    * m;
+                at = parent.get(&k).copied();
+            }
+            m
+        };
+        let p = |name: &str| at(name).transform_point3(Vec3::ZERO);
+        let mid = (p("upperarm_l") + p("upperarm_r")) / 2.0;
+        at("spine_03").inverse().transform_vector3(p("head") - mid)
+    }
+
+    /// Seated still, settled and walking: the rein arm (the left) bends at the
+    /// elbow instead of locking straight, the rider sits upright (the sitting
+    /// clip leans back about 7°, which put the shoulders behind the hips), his
+    /// head sits over his shoulders as standing at rest (the clip pulled the
+    /// shoulders ~8 cm back, leaving the head ahead of them), and no arm passes
+    /// through his body.
+    #[test]
+    fn sitting_and_walking_the_arms_bend_and_keep_out_of_the_body() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = seated_every(rider, 0.0, 20);
+        let rest_head = rest_head_from_shoulders();
+        // Just seated, settled with the hand resting low in front, walking.
+        for (speed, settle) in [(0.0, 20), (0.0, 200), (1.25, 120)] {
+            for _ in 0..settle {
+                ride(&mut app, me, speed);
+            }
+            let carrier = app.world().get::<Children>(me).unwrap()[0];
+            let (mut elbow, mut lean, mut head) = (Vec::new(), Vec::new(), 0.0f32);
+            for _ in 0..10 {
+                ride(&mut app, me, speed);
+                let model = posed_model(&mut app, me, carrier, speed);
+                let world = app.world();
+                let seat = world
+                    .get::<GlobalTransform>(model)
+                    .unwrap()
+                    .affine()
+                    .inverse();
+                let at = |b: &str| {
+                    seat.transform_point3(
+                        world
+                            .get::<GlobalTransform>(named(world, model, b))
+                            .unwrap()
+                            .translation(),
+                    )
+                };
+                elbow.push(angle_at(at("upperarm_l"), at("lowerarm_l"), at("hand_l")));
+                let back = at("neck_01") - at("pelvis");
+                lean.push(back.z.atan2(back.y).to_degrees());
+                head = head.max(head_from_shoulders(world, model).distance(rest_head));
+            }
+            let model = posed_model(&mut app, me, carrier, speed);
+            let (rein, free) = arms_off_the_body(&mut app, model);
+            let (rein, free) = (rein[0].min(rein[1]), free[0].min(free[1]));
+            let n = elbow.len() as f32;
+            let (elbow, lean) = (elbow.iter().sum::<f32>() / n, lean.iter().sum::<f32>() / n);
+            println!(
+                "{speed} m/s after {settle} frames: elbow {elbow:.0}°, lean {lean:.1}°, head {head:.3} m off its rest, arms off the body: rein {rein:.3} m, free {free:.3} m"
+            );
+            assert!(
+                (95.0..150.0).contains(&elbow),
+                "{speed} m/s: the rein elbow at {elbow}°"
+            );
+            assert!(lean.abs() < 4.0, "{speed} m/s: leaning {lean}°");
+            assert!(head < 0.04, "{speed} m/s: the head {head} m off its rest");
+            // Standing still, now and then the free hand goes up to the hat
+            // brim, past the chest: then only never inside the body.
+            assert!(
+                rein > 0.02,
+                "{speed} m/s: the rein arm {rein} m off the body"
+            );
+            let sleeve = if speed > 0.0 { 0.02 } else { 0.0 };
+            assert!(
+                free > sleeve,
+                "{speed} m/s: the free arm {free} m off the body"
+            );
+        }
+    }
+
+    /// At full gallop the rider holds the reins in both hands (S9), each rein
+    /// in its own hand; over a couple of strides neither arm goes into his
+    /// chest, the reins never cut the horse, and his head stays over his
+    /// shoulders.
+    #[test]
+    fn at_the_gallop_both_hands_hold_the_reins_clear_of_the_chest_and_the_head_over_the_shoulders()
+    {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = seated_every(rider, 12.2, 20);
+        for _ in 0..160 {
+            app.update();
+        }
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        let rest_head = rest_head_from_shoulders();
+        let mut arms = [[f32::MAX; 2]; 2];
+        let mut head = 0.0f32;
+        // Every frame of a whole stride (24 frames) and a bit: the hands
+        // follow the mouth back toward the chest at one point of it.
+        for _ in 0..28 {
+            app.update();
+            let model = posed_model(&mut app, me, carrier, 12.2);
+            head = head.max(head_from_shoulders(app.world(), model).distance(rest_head));
+            let (rein, free) = arms_off_the_body(&mut app, model);
+            for (k, side) in [rein, free].into_iter().enumerate() {
+                arms[k] = [arms[k][0].min(side[0]), arms[k][1].min(side[1])];
+            }
+        }
+        // Each rein ends in its own hand.
+        let world = app.world_mut();
+        let seated = world
+            .query_filtered::<&Seated, With<Riding>>()
+            .single(world)
+            .unwrap()
+            .clone();
+        let tack = *world.get::<Tack>(carrier).unwrap();
+        for s in 0..2 {
+            let rein = world.get::<Strap>(tack.reins[s]).unwrap();
+            assert_eq!(rein.ends[1].0, seated.bone(Bone::Hand(s)), "rein {s}");
+        }
+        let (_, _, cuts) = crate::character::tack::tests::clearances(&mut app, me, 24);
+        println!(
+            "gallop: left upper arm {:.3} m and forearm {:.3} m, right {:.3} m and {:.3} m off the body, head {head:.3} m off its rest, cuts {cuts:?}",
+            arms[0][0], arms[0][1], arms[1][0], arms[1][1]
+        );
+        for (side, [upper, fore]) in ["left", "right"].into_iter().zip(arms) {
+            // The forearm reaches forward in front of the chest, well off it
+            // (measured 8.6-11 cm; without the hands kept forward, 0.6-5.7).
+            // The upper arm hangs by the side of the ribs: never inside.
+            assert!(fore > 0.07, "the {side} forearm {fore} m off the body");
+            assert!(upper > 0.0, "the {side} upper arm {upper} m off the body");
+        }
+        assert!(cuts.is_empty(), "{cuts:?}");
+        // Leaning into the gallop the head is held level, bending the neck a
+        // little more than sitting.
+        assert!(head < 0.05, "the head {head} m off its rest");
     }
 
     #[test]
@@ -2089,10 +2554,19 @@ pub(crate) mod tests {
         for k in 0..frames {
             app.update();
             let world = app.world();
-            let model = named(world, carrier, "Rider model");
-            let [upper, lower, hand, finger] =
+            // A frame while the rider's scene is being created again.
+            let Some(model) = try_named(world, carrier, "Rider model") else {
+                continue;
+            };
+            let Some([upper, lower, hand, finger]) =
                 ["upperarm_r", "lowerarm_r", "hand_r", "middle_02_r"]
-                    .map(|n| named(world, model, n));
+                    .map(|n| try_named(world, model, n))
+                    .into_iter()
+                    .collect::<Option<Vec<Entity>>>()
+                    .and_then(|v| <[Entity; 4]>::try_from(v).ok())
+            else {
+                continue;
+            };
             let at = |e: Entity| world.get::<GlobalTransform>(e).unwrap().translation();
             elbow.push(angle_at(at(upper), at(lower), at(hand)));
             let seat = world
@@ -2119,7 +2593,70 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_free_arm_swings_with_the_gallop_less_at_the_walk_and_keeps_off_the_horse() {
+    fn the_free_hand_hangs_open_and_closes_on_its_rein_at_the_gallop() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = seated_every(rider, 1.5, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        // The middle finger's curl at its second joint and the free wrist's
+        // turn off its rest; the free (right) hand against the left on the
+        // reins.
+        let curls = |app: &mut App, speed: f32| {
+            for _ in 0..160 {
+                ride(app, me, speed);
+            }
+            let (mut free, mut reins, mut wrist) = (0.0f32, f32::MAX, 0.0f32);
+            for _ in 0..40 {
+                ride(app, me, speed);
+                let world = app.world();
+                // A frame while the rider's scene is being created again.
+                let Some(model) = try_named(world, carrier, "Rider model") else {
+                    continue;
+                };
+                let (Some(seated), Some(right), Some(left), Some(hand)) = (
+                    world.get::<Seated>(model),
+                    try_named(world, model, "middle_02_r"),
+                    try_named(world, model, "middle_02_l"),
+                    try_named(world, model, "hand_r"),
+                ) else {
+                    continue;
+                };
+                let turn = |e: Entity| world.get::<Transform>(e).unwrap().rotation;
+                free = free.max(turn(right).angle_between(Quat::IDENTITY));
+                reins = reins.min(turn(left).angle_between(Quat::IDENTITY));
+                wrist = wrist.max(turn(hand).angle_between(seated.loose.0));
+            }
+            println!(
+                "{speed} m/s: free finger {:.0}°, reins finger {:.0}°, free wrist {:.0}° off rest",
+                free.to_degrees(),
+                reins.to_degrees(),
+                wrist.to_degrees()
+            );
+            (free, reins, wrist)
+        };
+        for speed in [0.0, 1.5] {
+            let (free, reins, wrist) = curls(&mut app, speed);
+            // Open, much less curled than the hand on the reins, the wrist
+            // near its rest.
+            assert!(
+                free < reins * 0.5,
+                "{speed} m/s: free {free}, reins {reins}"
+            );
+            assert!(wrist < 0.35, "{speed} m/s: wrist {wrist} off rest");
+        }
+        // At the gallop the right hand holds its rein: a fist like the left.
+        let (free, reins, _) = curls(&mut app, 12.2);
+        assert!(free > reins * 0.8, "gallop: free {free}, reins {reins}");
+    }
+
+    #[test]
+    /// The free (right) arm sways at the walk and keeps off the horse; since
+    /// S9 it takes its own rein at the gallop (see
+    /// `at_the_gallop_both_hands_hold_the_reins_...`), so the gallop only checks
+    /// that it keeps off the horse.
+    fn the_free_arm_sways_at_the_walk_and_keeps_off_the_horse() {
         let rider = CharacterVisual::Mounted {
             rider: FigureKind::Protagonist,
             coat: Coat::Bayo,
@@ -2152,25 +2689,15 @@ pub(crate) mod tests {
             );
             seen.push((spread(&elbow), moved, mean));
         }
-        let [
-            (walk_bend, walk_moves, walk_mean),
-            (gallop_bend, gallop_moves, _),
-            _,
-        ] = seen[..]
-        else {
+        let [(_, walk_moves, walk_mean), _, _] = seen[..] else {
             unreachable!()
         };
-        // El galope la balancea, flexionando el codo; el paso menos, pero algo.
-        assert!(
-            gallop_bend > 6.0 && gallop_moves > 0.03,
-            "{gallop_bend}° {gallop_moves} m"
-        );
-        assert!(
-            gallop_moves < FREE_REACH + 0.05,
-            "never flailing: {gallop_moves}"
-        );
-        assert!(walk_moves < gallop_moves && walk_bend < gallop_bend);
+        // El paso la balancea, poco.
         assert!(walk_moves > 0.003, "the walk sways it: {walk_moves}");
+        assert!(
+            walk_moves < FREE_REACH + 0.05,
+            "never flailing: {walk_moves}"
+        );
         // En reposo el codo está doblado unos 30–60° (un ángulo de 120–150°).
         assert!((120.0..150.0).contains(&walk_mean), "{walk_mean}°");
     }
@@ -2190,7 +2717,7 @@ pub(crate) mod tests {
                 world.query::<&HorseModel>().iter(world).count(),
             )
         };
-        assert_eq!(count(&mut app), (32, 1, 1));
+        assert_eq!(count(&mut app), (38, 1, 1));
         app.world_mut()
             .entity_mut(me)
             .insert(CharacterVisual::Figure(FigureKind::Protagonist));
@@ -2211,7 +2738,7 @@ pub(crate) mod tests {
             }
         }
         app.update();
-        assert_eq!(count(&mut app), (32, 1, 1));
+        assert_eq!(count(&mut app), (38, 1, 1));
         let world = app.world_mut();
         let (riding, seated) = world.query::<(&Riding, &Seated)>().single(world).unwrap();
         let (horse, hand) = (
@@ -2237,7 +2764,10 @@ pub(crate) mod tests {
             let mut deepest = 0.0f32;
             for _ in 0..frames {
                 app.update();
-                let model = named(app.world(), carrier, "Rider model");
+                // A frame while the rider's scene is being created again.
+                let Some(model) = try_named(app.world(), carrier, "Rider model") else {
+                    continue;
+                };
                 deepest = deepest.max(poncho_in_arms(app.world_mut(), model));
             }
             println!("{speed} m/s: the poncho {deepest:.3} m into an arm");

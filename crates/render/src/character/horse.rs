@@ -1939,15 +1939,21 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn named(world: &World, under: Entity, name: &str) -> Entity {
+        try_named(world, under, name).unwrap_or_else(|| panic!("no {name}"))
+    }
+
+    /// [`named`], or nothing on a frame when a scene being created again
+    /// (parallel runs) has not spawned it yet.
+    pub(crate) fn try_named(world: &World, under: Entity, name: &str) -> Option<Entity> {
         let children = |e: Entity| world.get::<Children>(e).into_iter().flatten().copied();
         let mut stack: Vec<Entity> = children(under).collect();
         while let Some(e) = stack.pop() {
             if world.get::<Name>(e).is_some_and(|n| n.as_str() == name) {
-                return e;
+                return Some(e);
             }
             stack.extend(children(e));
         }
-        panic!("no {name}");
+        None
     }
 
     /// Qué tan rápido se deslizan hacia atrás en el marco del cuerpo del
