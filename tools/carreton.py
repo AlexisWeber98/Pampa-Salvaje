@@ -133,7 +133,8 @@ def build():
                      up=(0, 1, 0), scales=[0.7, 1.0, 0.7]))
     for sx in (1.0, -1.0):
         a = (0.48 * sx, -0.86, 1.05)
-        b = ((HORSE_X - H.TRACE[0] - 0.02) * sx, -0.85 + 0.0, 1.11)
+        # The pole strap, to the breast collar's inner side.
+        b = ((HORSE_X - 0.19) * sx, H.TRACE[1] - 0.23, H.TRACE[2])
         m.extend(V.sweep([a, V.lerp(a, b, 0.5), b], V.rect(0.03, 0.008, 0.002), leather, (0.4, 0.05), up=(0, 1, 0)))
     dt_y, dt_z = 1.30, 0.80
     m.extend(V.sweep([(-0.62, dt_y, dt_z), (0, dt_y, dt_z + 0.01), (0.62, dt_y, dt_z)], V.ellipse(0.07, 0.06, 10), wood, (0.8, 0.15),
@@ -155,7 +156,7 @@ def build():
         cx = HORSE_X * sx
         for side in (1.0, -1.0):
             bit = (cx + H.BIT[0] * side, H.BIT[1], H.BIT[2])
-            terret = (cx + H.TERRET[0] * side, H.TERRET[1], H.TERRET[2] + 0.02)
+            terret = (cx + H.TERRET[0] * side, H.TERRET[1], H.TERRET[2])
             hand = (0.12 * (1 if side * sx > 0 else -1) * (1 if sx > 0 else 1), sy - 0.45, sz + 0.18)
             line = V.bezier(bit, V.add(bit, (0, 0.35, -0.12)), V.add(terret, (0, -0.4, -0.06)), terret, 8)
             line += V.bezier(terret, V.add(terret, (0, 0.8, -0.10)), V.add(hand, (0, -0.8, -0.20)), hand, 12)[1:]

@@ -10,16 +10,20 @@
 //!   (`textures/vehicles/<conjunto>/`, KTX2) y se cambian por los propios
 //!   ([`VehicleMaterials`]); su malla lejana (`*_LOD`) se dibuja desde
 //!   [`LOD_NEAR`].
-//! - Los arreos de un caballo de tiro y el yugo del buey de la izquierda son
-//!   piezas rígidas `<pieza>@<hueso>` con sus vértices en el espacio del
-//!   modelo en su pose de bind: cada una cuelga del hueso por su matriz de
-//!   bind inversa, así que acompaña cada clip ([`dress_animals`]).
+//! - Los arreos de un caballo de tiro son mallas con skinning sobre un
+//!   esqueleto con los nombres del de henry, en reposo parado como al empezar
+//!   `Idle_1`: cada una se pone sobre las articulaciones del caballo del mismo
+//!   nombre con las matrices de bind inversas de su propio archivo, así que se
+//!   dobla con él en cada clip. El yugo del buey de la izquierda es una pieza
+//!   rígida `<pieza>@<hueso>` con sus vértices en el espacio del modelo en su
+//!   pose de bind: cuelga del hueso por su matriz de bind inversa
+//!   ([`dress_animals`]).
 //! - El buey anda con el clip `Walk` llevado por lo rodado, así que sus patas
 //!   pisan al paso del vehículo y los dos de la yunta van iguales; parado,
 //!   rumia con `Idle` ([`walk_oxen`]).
 
 use bevy::camera::visibility::VisibilityRange;
-use bevy::gltf::{Gltf, GltfMaterial, GltfMaterialName, GltfMesh, GltfNode};
+use bevy::gltf::{Gltf, GltfMaterial, GltfMaterialName, GltfMesh, GltfNode, GltfSkin};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -143,7 +147,8 @@ pub struct VehicleOx {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct OfVehicle(pub Entity);
 
-/// Un animal que ya lleva sus arreos (o su yugo).
+/// El nodo de la malla de un animal que ya lleva sus arreos (o su yugo): en la
+/// escena del animal, así que una escena creada de nuevo se viste otra vez.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Dressed;
 
@@ -428,13 +433,29 @@ fn ox_material(
     Some(materials.add(m))
 }
 
-/// Las piezas `<pieza>@<hueso>` de un glTF de arreos, con su malla y el
-/// nombre de su material.
-fn pieces<'a>(
-    file: &'a Gltf,
-    nodes: &'a Assets<GltfNode>,
-    meshes: &'a Assets<GltfMesh>,
-) -> Vec<(&'a str, Handle<Mesh>, Option<String>)> {
+/// De qué cuelga una pieza de arreos.
+#[derive(Debug, Clone)]
+enum Hang {
+    /// Rígida, del hueso de este nombre (`<pieza>@<hueso>`).
+    Joint(String),
+    /// Con skinning: sobre los huesos del animal con estos nombres, en orden,
+    /// con estas matrices de bind inversas (las de su propio archivo).
+    Skin(Vec<String>, Handle<SkinnedMeshInverseBindposes>),
+}
+
+/// Una pieza de arreos: su nombre, de qué cuelga, su malla y el nombre de su
+/// material.
+type Piece = (String, Hang, Handle<Mesh>, Option<String>);
+
+/// Las piezas de un glTF de arreos, con su nombre, de qué cuelgan, su malla y
+/// el nombre de su material: las rígidas `<pieza>@<hueso>` y las que tienen
+/// piel. `None` mientras falte cargar alguno de sus nodos o pieles.
+fn pieces(
+    file: &Gltf,
+    nodes: &Assets<GltfNode>,
+    meshes: &Assets<GltfMesh>,
+    skins: &Assets<GltfSkin>,
+) -> Option<Vec<Piece>> {
     let names: HashMap<AssetId<GltfMaterial>, String> = file
         .named_materials
         .iter()
@@ -442,26 +463,38 @@ fn pieces<'a>(
         .collect();
     let mut out = Vec::new();
     for (node_name, handle) in &file.named_nodes {
-        let Some((_, joint)) = node_name.split_once('@') else {
+        let node = nodes.get(handle)?;
+        let Some(mesh) = node.mesh.as_ref() else {
             continue;
         };
-        let Some(mesh) = nodes
-            .get(handle)
-            .and_then(|n| n.mesh.as_ref())
-            .and_then(|m| meshes.get(m))
-        else {
+        let hang = if let Some(skin) = node.skin.as_ref() {
+            let skin = skins.get(skin)?;
+            let joints = skin
+                .joints
+                .iter()
+                .map(|j| nodes.get(j).map(|n| n.name.clone()))
+                .collect::<Option<Vec<_>>>()?;
+            Hang::Skin(joints, skin.inverse_bind_matrices.clone())
+        } else if let Some((_, joint)) = node_name.split_once('@') {
+            Hang::Joint(joint.to_string())
+        } else {
             continue;
         };
-        for p in &mesh.primitives {
+        for p in &meshes.get(mesh)?.primitives {
             let material = p
                 .material
                 .as_ref()
                 .and_then(|m| names.get(&m.id()))
                 .cloned();
-            out.push((joint, p.mesh.clone(), material));
+            out.push((
+                node_name.to_string(),
+                hang.clone(),
+                p.mesh.clone(),
+                material,
+            ));
         }
     }
-    out
+    Some(out)
 }
 
 /// Los almacenes de los que se leen los arreos y las pieles.
@@ -469,26 +502,36 @@ type HarnessAssets<'w> = (
     Option<Res<'w, Assets<Gltf>>>,
     Option<Res<'w, Assets<GltfNode>>>,
     Option<Res<'w, Assets<GltfMesh>>>,
+    Option<Res<'w, Assets<GltfSkin>>>,
     Option<Res<'w, Assets<SkinnedMeshInverseBindposes>>>,
 );
 
 /// Viste a los caballos de tiro con sus arreos y al buey de la izquierda con
-/// el yugo, una vez que su modelo con piel está creado: cada pieza cuelga del
-/// hueso de su nombre por su matriz de bind inversa.
+/// el yugo, una vez que su modelo con piel está creado: cada pieza con piel se
+/// pone sobre las articulaciones del animal del mismo nombre (junto a su
+/// piel); cada pieza rígida cuelga del hueso de su nombre por su matriz de
+/// bind inversa.
 #[allow(clippy::too_many_arguments)]
 pub fn dress_animals(
     mut commands: Commands,
     models: Option<Res<VehicleModels>>,
     mats: Option<Res<VehicleMaterials>>,
-    (files, nodes, meshes, binds): HarnessAssets,
-    horses: Query<Entity, (With<VehicleHorse>, Without<Dressed>)>,
-    oxen: Query<(Entity, &VehicleOx), Without<Dressed>>,
-    children: Query<&Children>,
-    skins: Query<&SkinnedMesh>,
+    (files, nodes, meshes, skins, binds): HarnessAssets,
+    horses: Query<Entity, With<VehicleHorse>>,
+    oxen: Query<(Entity, &VehicleOx)>,
+    (children, parents, dressed): (Query<&Children>, Query<&ChildOf>, Query<(), With<Dressed>>),
+    skinned: Query<&SkinnedMesh>,
     names: Query<&Name>,
 ) {
-    let (Some(models), Some(mats), Some(files), Some(nodes), Some(meshes), Some(binds)) =
-        (models, mats, files, nodes, meshes, binds)
+    let (
+        Some(models),
+        Some(mats),
+        Some(files),
+        Some(nodes),
+        Some(meshes),
+        Some(skins),
+        Some(binds),
+    ) = (models, mats, files, nodes, meshes, skins, binds)
     else {
         return;
     };
@@ -497,39 +540,77 @@ pub fn dress_animals(
             .map(|(e, ox)| (e, if ox.left { models.yoke.as_ref() } else { None })),
     );
     for (animal, file) in animals {
-        let Some(skin) = children
+        let Some((primitive, skin)) = children
             .iter_descendants(animal)
-            .find_map(|e| skins.get(e).ok())
+            .find_map(|e| skinned.get(e).ok().map(|s| (e, s)))
         else {
             continue;
         };
+        // El nodo de la malla del animal: sus primitivas (la piel, las
+        // tarjetas de pelo) pueden ocultarse por separado.
+        let body = parents.get(primitive).map_or(primitive, ChildOf::parent);
+        if dressed.contains(body) {
+            continue;
+        }
         let Some(file) = file else {
-            commands.entity(animal).try_insert(Dressed);
+            commands.entity(body).try_insert(Dressed);
             continue;
         };
         let (Some(file), Some(bind)) = (files.get(file), binds.get(&skin.inverse_bindposes)) else {
             continue;
         };
-        for (joint, mesh, material) in pieces(file, &nodes, &meshes) {
-            let Some(k) = skin
-                .joints
-                .iter()
-                .position(|&j| names.get(j).is_ok_and(|n| n.as_str() == joint))
-            else {
-                continue;
-            };
+        let Some(pieces) = pieces(file, &nodes, &meshes, &skins) else {
+            continue;
+        };
+        let joints: HashMap<&str, Entity> = children
+            .iter_descendants(animal)
+            .filter_map(|e| names.get(e).ok().map(|n| (n.as_str(), e)))
+            .collect();
+        for (piece, hang, mesh, material) in pieces {
             let Some(material) = material.and_then(|m| mats.by_name.get(&m).cloned()) else {
                 continue;
             };
-            commands.spawn((
-                Name::new(format!("Harness on {joint}")),
-                Mesh3d(mesh),
-                MeshMaterial3d(material),
-                Transform::from_matrix(bind[k]),
-                ChildOf(skin.joints[k]),
-            ));
+            match hang {
+                Hang::Skin(bones, inverse_bindposes) => {
+                    let Some(bones) = bones
+                        .iter()
+                        .map(|b| joints.get(b.as_str()).copied())
+                        .collect::<Option<Vec<_>>>()
+                    else {
+                        warn!("the harness piece {piece} names joints the animal lacks");
+                        continue;
+                    };
+                    commands.spawn((
+                        Name::new(format!("Harness {piece}")),
+                        Mesh3d(mesh),
+                        MeshMaterial3d(material),
+                        SkinnedMesh {
+                            inverse_bindposes,
+                            joints: bones,
+                        },
+                        Transform::default(),
+                        ChildOf(body),
+                    ));
+                }
+                Hang::Joint(joint) => {
+                    let Some(k) = skin
+                        .joints
+                        .iter()
+                        .position(|&j| names.get(j).is_ok_and(|n| n.as_str() == joint))
+                    else {
+                        continue;
+                    };
+                    commands.spawn((
+                        Name::new(format!("Harness on {joint}")),
+                        Mesh3d(mesh),
+                        MeshMaterial3d(material),
+                        Transform::from_matrix(bind[k]),
+                        ChildOf(skin.joints[k]),
+                    ));
+                }
+            }
         }
-        commands.entity(animal).try_insert(Dressed);
+        commands.entity(body).try_insert(Dressed);
     }
 }
 

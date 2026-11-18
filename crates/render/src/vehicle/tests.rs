@@ -233,3 +233,135 @@ fn a_vehicle_model_spins_its_wheels_with_the_distance_rolled() {
         );
     }
 }
+
+#[test]
+fn a_draught_horse_wears_its_harness_on_its_own_joints_through_its_clips() {
+    use crate::character::bones::HorseJoint;
+    use crate::character::cpu;
+    use crate::character::horse::tests::try_named;
+    use crate::gltf::tests::{root, unfinished_app};
+    use bevy::mesh::skinning::SkinnedMesh;
+    let mut app = unfinished_app(&root());
+    app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+        .add_plugins(bevy::animation::AnimationPlugin)
+        .insert_resource(root())
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            20,
+        )))
+        .add_plugins((
+            crate::fauna::FaunaPlugin,
+            CharacterVisualPlugin,
+            VehiclePlugin,
+        ));
+    app.finish();
+    app.cleanup();
+    app.update();
+    let me = app
+        .world_mut()
+        .spawn((
+            VehicleVisual::seeded(Vehicle::Sulky, 2, 7).driverless(),
+            Rolled(0.0),
+        ))
+        .id();
+    let harness = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &Name, &SkinnedMesh)>()
+            .iter(world)
+            .filter(|(_, n, _)| n.as_str().starts_with("Harness "))
+            .map(|(e, n, s)| (e, n.to_string(), s.joints.clone()))
+            .collect::<Vec<_>>()
+    };
+    let mut pieces = Vec::new();
+    for _ in 0..3000 {
+        app.update();
+        pieces = harness(&mut app);
+        if !pieces.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let names: Vec<&str> = pieces.iter().map(|(_, n, _)| n.as_str()).collect();
+    for piece in [
+        "Collar",
+        "Saddle",
+        "Bands",
+        "BackStrap",
+        "Crupper",
+        "Breeching",
+        "Bridle",
+        "Blinkers",
+        "Bit",
+    ] {
+        assert!(
+            names.contains(&format!("Harness {piece}").as_str()),
+            "{piece} in {names:?}"
+        );
+    }
+    let horse = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<VehicleHorse>>()
+            .single(world)
+            .unwrap()
+    };
+    // Cada pieza sobre las articulaciones de este caballo.
+    for (_, name, joints) in &pieces {
+        for &j in joints {
+            let mut at = j;
+            while at != horse {
+                at = app
+                    .world()
+                    .get::<ChildOf>(at)
+                    .unwrap_or_else(|| panic!("{name}: a joint off the horse"))
+                    .parent();
+            }
+        }
+    }
+    let mut measured = 0;
+    for (animation, speed) in [
+        (AnimationState::Idle, 0.0),
+        (AnimationState::Walk, 1.2),
+        (AnimationState::Gallop, 6.0),
+    ] {
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation,
+            speed,
+            ..default()
+        });
+        for frame in 0..60 {
+            app.update();
+            if frame % 6 != 0 {
+                continue;
+            }
+            // Bajo carga la escena del caballo a veces se crea de nuevo: un
+            // cuadro sin ella (ni sus arreos) no se mide.
+            let now = harness(&mut app);
+            let Some(lip) = try_named(app.world(), horse, HorseJoint::UpperLip.name()) else {
+                continue;
+            };
+            let lip = app
+                .world()
+                .get::<GlobalTransform>(lip)
+                .unwrap()
+                .translation();
+            let drawn = cpu::drawn(app.world_mut(), Some(horse));
+            let Some(bit) = now
+                .iter()
+                .find(|(_, n, _)| n == "Harness Bit")
+                .and_then(|(e, ..)| drawn.iter().find(|d| d.entity == *e))
+            else {
+                continue;
+            };
+            let mid = bit.positions.iter().sum::<Vec3>() / bit.positions.len() as f32;
+            // Las argollas en las comisuras, a una mano del labio de arriba.
+            assert!(
+                mid.distance(lip) < 0.12,
+                "{animation:?} frame {frame}: the bit {mid} is {} m from the upper lip {lip}",
+                mid.distance(lip)
+            );
+            measured += 1;
+        }
+    }
+    assert!(measured > 20, "only {measured} of 30 frames measured");
+}

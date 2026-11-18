@@ -27,8 +27,8 @@ the trotting sulky). Its parts, at period sizes:
   the reins from its bit, over the pad's terrets, to the driver's hands
   (static: the harness on the horse is ``tools/vehicle_harness.py``).
 
-The origin is the ground under the horse's body (``tools/horse.py``'s
-origin), so the game moves the sulky by its horse; ``Animal.0`` marks it.
+The origin is the ground under the horse's body (henry's origin, the
+horse the game draws), so the game moves the sulky by its horse; ``Animal.0`` marks it.
 The vehicle faces -Y, its left is +X. See ``tools/vehicle.py`` for the
 nodes, materials and the preview.
 """
@@ -50,18 +50,29 @@ SINGLETREE_Y = 1.24
 
 
 def shaft_path(sx):
-    """The left shaft (``sx`` = +1) or the right (-1), tip to tail."""
-    tip = (0.30 * sx, -0.78, 1.16)
-    tug = (H.TUG[0] * sx + 0.07 * sx, H.TUG[1], H.TUG[2] - 0.02)
+    """The left shaft (``sx`` = +1) or the right (-1), tip to tail: from in
+    front of the point of the shoulder, through the tug, past the quarters
+    and out to the seat."""
+    tip = (0.30 * sx, H.TRACE[1] - 0.32, H.TUG[2] + 0.04)
+    tug = (H.TUG[0] * sx, H.TUG[1], H.TUG[2])
     hind = (0.37 * sx, 0.70, 1.02)
     bar = (0.44 * sx, 1.30, 0.98)
     seat = (0.46 * sx, 2.10, 0.98)
     tail = (0.46 * sx, 2.78, 0.96)
-    p = V.bezier(tip, (0.31 * sx, -0.55, 1.10), (tug[0], tug[1] - 0.25, tug[2]), tug, 6)
+    p = V.bezier(tip, (0.31 * sx, tip[1] + 0.23, tip[2] - 0.04), (tug[0], tug[1] - 0.25, tug[2]), tug, 6)
     p += V.bezier(tug, (tug[0], tug[1] + 0.35, tug[2]), (hind[0], hind[1] - 0.3, hind[2]), hind, 5)[1:]
     p += V.bezier(hind, (hind[0], hind[1] + 0.25, hind[2]), (bar[0] - 0.03 * sx, bar[1] - 0.2, bar[2]), bar, 4)[1:]
     p += [seat, tail]
     return p
+
+
+def shaft_at(sx, y):
+    """The point of a shaft's middle line at ``y``."""
+    path = shaft_path(sx)
+    for a, b in zip(path, path[1:]):
+        if a[1] <= y <= b[1]:
+            return V.lerp(a, b, (y - a[1]) / (b[1] - a[1]))
+    raise ValueError(f"no shaft at y {y}")
 
 
 def build():
@@ -215,10 +226,10 @@ def build():
         trace = V.bezier(a, V.lerp(a, side, 0.6), V.lerp(side, b, 0.4), b, 14)
         m.extend(V.sweep(trace, V.rect(0.035, 0.008, 0.002), leather, (0.4, 0.05), up=(1, 0, 0)))
         hold = (H.BREECH[0] * sx, H.BREECH[1], H.BREECH[2])
-        on_shaft = (0.37 * sx, 0.72, 1.02)
+        on_shaft = shaft_at(sx, H.BREECH[1] + 0.06)
         m.extend(V.sweep([hold, V.lerp(hold, on_shaft, 0.5), on_shaft], V.rect(0.03, 0.006, 0.002), leather, (0.4, 0.05), up=(0, 1, 0)))
         bit = (H.BIT[0] * sx, H.BIT[1], H.BIT[2])
-        terret = (H.TERRET[0] * sx, H.TERRET[1], H.TERRET[2] + 0.02)
+        terret = (H.TERRET[0] * sx, H.TERRET[1], H.TERRET[2])
         hand = (0.11 * sx, sy - 0.40, sz + 0.12)
         rein = V.bezier(bit, V.add(bit, (0.03 * sx, 0.35, -0.12)), V.add(terret, (0.0, -0.4, -0.06)), terret, 10)
         rein += V.bezier(terret, V.add(terret, (0, 0.6, -0.08)), V.add(hand, (0, -0.6, -0.15)), hand, 10)[1:]
