@@ -1,5 +1,6 @@
 //! El recado criollo y la brida de cuero crudo de un peón de estancia de La
-//! Pampa en 1919, sobre el caballo modelo (ver [`horse`](super::horse)).
+//! Pampa en 1919, sobre el caballo de henrysteve973 (ver
+//! [`horse`](super::horse) y [`bones`](super::bones)).
 //!
 //! **Las capas**, de abajo hacia arriba, como las describen los viajeros del
 //! siglo XIX que cita *Tradición Gaucha* (Hutchinson 1862, Zeballos 1878,
@@ -19,13 +20,16 @@
 //!
 //! - **El recado modelado** ([`Recado`], [`RECADO_PATH`]): los bastos, el
 //!   cojinillo con sus mechones, el sobrepuesto, la cabezada y el freno,
-//!   modelados en Blender sobre el caballo en reposo por `tools/recado.py`,
-//!   con skinning a sus huesos por nombre: las piezas del lomo solo a los
-//!   huesos del tronco (nunca al cuello ni a las patas, que las levantarían
-//!   al bajar la cabeza o al galopar), la cabezada y el freno a la cabeza y
-//!   al cuello como la piel que tienen debajo. Se llevan al marco del cuerpo del
-//!   caballo ([`rest_mesh`]) con el reposo de sus articulaciones, tomado
-//!   cuando su escena se prepara ([`PendingTack`]), y se dibujan con las
+//!   modelados en Blender por `tools/recado.py` sobre el caballo parado como
+//!   al empezar `Idle_1` (el reposo de los nodos de su glTF tiene la cabeza
+//!   junto a los vasos), con skinning a sus huesos por nombre: las piezas del
+//!   lomo solo a los huesos del tronco (nunca al cuello ni a las patas, que
+//!   las levantarían al bajar la cabeza o al galopar), la cabezada y el freno a
+//!   la cabeza y al cuello como la piel que tienen debajo. El esqueleto del
+//!   recado reposa en esa pose, y todos los aperos se ajustan al caballo
+//!   parado así (`recado_pose`; sin el recado, en el reposo de su escena,
+//!   tomado cuando se prepara: [`PendingTack`]): sus piezas se llevan al marco
+//!   del cuerpo del caballo ([`rest_mesh`]) y se dibujan con las
 //!   articulaciones de la piel del caballo. Sus marcas dicen dónde salen las
 //!   riendas y dónde se sienta el jinete.
 //! - **Carcasas** ([`Shell`]): la bajera, la matra, la carona, la cincha, el
@@ -39,7 +43,8 @@
 //!   ([`RestHorse::cast`]).
 //! - **Hierros**: las argollas de la cincha y el estribo ([`stirrup`]).
 //! - **Correas** ([`Strap`]): las riendas (desde el freno, por detrás de la
-//!   quijada y a lo largo del cuello hasta las manos del jinete, o hasta la
+//!   quijada, flojas a lo largo del costado del cuello bajo la crin
+//!   ([`NECK_RESTS`]) y por la cruz hasta las manos del jinete, o hasta la
 //!   montura en un caballo sin jinete) y las aciones (desde la montura hasta
 //!   los estribos), estiradas en cada frame después de que se calculan los
 //!   transforms ([`stretch_straps`]). Las aciones son planas y rectas; el
@@ -52,7 +57,7 @@
 //! [`TACK_DIR`] ([`TackSet`]), pintados por `tools/tack.py` y
 //! `tools/recado.py`; sin ellos, cada pieza se dibuja con su color liso.
 //! **El costo** para la iGPU Renoir: a lo sumo [`TACK_BUDGET`] triángulos por
-//! caballo ensillado (medidos: 11.002) y unos 11,8 MB de video entre los seis
+//! caballo ensillado (medidos: 11.362) y unos 11,8 MB de video entre los seis
 //! conjuntos con sus mips (dos de 1024², tres de 512² y uno de 256², a un
 //! byte por texel en BC7), compartidos por todos los caballos.
 //!
@@ -74,6 +79,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
+use super::bones::HorseJoint;
 use super::figure::Rgb;
 use super::finish::{Finish, Palette};
 use super::horse::{HorseBody, HorseModel, transform_of};
@@ -395,10 +401,12 @@ pub struct Axis {
 }
 
 impl Axis {
-    /// El del costillar: a lo largo del lomo, a 1.14 m de altura (con su centro
-    /// en la cinchera).
+    /// El del costillar: a lo largo del lomo, a 1.19 m de altura, en el medio
+    /// del costillar (el lomo a 1.459 m y la panza a 0.870 m), con su centro en
+    /// la cinchera: un palmo detrás del punto más bajo del lomo y unos cuatro
+    /// detrás del codo (como `tools/recado.py`).
     pub const BARREL: Self = Self {
-        origin: Vec3::new(0.0, 1.14, 0.0),
+        origin: Vec3::new(0.1, 1.19, 0.0),
         along: Vec3::X,
         up: Vec3::Y,
     };
@@ -406,9 +414,9 @@ impl Axis {
     /// El de la cabeza: desde detrás de la nuca, a lo largo de ella, hasta el
     /// hocico; el ángulo 0 es la frente.
     pub fn head() -> Self {
-        let along = Vec3::new(0.755, -0.656, 0.0).normalize();
+        let along = Vec3::new(0.446, -0.895, 0.0).normalize();
         Self {
-            origin: Vec3::new(1.1, 1.78, 0.01),
+            origin: Vec3::new(1.233, 1.768, 0.0),
             along,
             up: Vec3::new(-along.y, along.x, 0.0),
         }
@@ -1329,21 +1337,44 @@ fn layer_shell(
 pub const ARGOLLA: (f32, f32) = (0.01, 1.45);
 
 /// El rayo desde dentro del hocico hacia la comisura de la boca del lado `s`
-/// (-1 izquierda, 1 derecha), donde va una argolla del freno. La cabeza está
-/// centrada en la columna (la de Quaternius estaba 1.6 cm a la derecha).
+/// (-1 izquierda, 1 derecha), donde va una argolla del freno (sin el recado
+/// modelado, que marca las suyas).
 pub fn bit_ray(s: f32) -> (Vec3, Vec3) {
-    (Vec3::new(1.33, 1.48, 0.0), Vec3::Z * s)
+    (Vec3::new(1.36, 1.42, 0.0), Vec3::Z * s)
 }
 
-/// El rayo desde dentro del cuello hacia su costado, un palmo por debajo de la
-/// crin, del lado `s`: ahí las riendas se apoyan a lo largo del cuello. Bastante
-/// de costado para que la rienda desde la quijada no atraviese la parte alta
-/// del cuello, más llena en el caballo propio que en el de Quaternius.
-pub fn neck_ray(s: f32) -> (Vec3, Vec3) {
-    (
-        Vec3::new(0.7, 1.45, 0.0),
-        Vec3::new(0.0, 1.0, 0.75 * s).normalize(),
-    )
+/// Dónde se apoyan las riendas flojas sobre el costado del cuello, bajo la
+/// crin, desde la cabeza hacia la cruz: el origen de cada rayo dentro del
+/// cuello (cada punto lo lleva [`HorseJoint::Neck`] del mismo índice) y qué
+/// tan separada de la piel queda la rienda. Cuatro puntos (con el de la cruz)
+/// y tramos cortos: la rienda sigue al cuello cuando la cabeza baja o se da
+/// vuelta (henry la gira hasta 60° en sus esperas), en lugar de tenderse por
+/// el aire sobre la crin o atravesarlo (buscados cuadro por cuadro en cada
+/// clip de un caballo ensillado).
+pub const NECK_RESTS: [(Vec3, f32); 3] = [
+    (Vec3::new(1.05, 1.62, 0.0), 0.03),
+    (Vec3::new(0.9, 1.55, 0.0), 0.03),
+    (Vec3::new(0.75, 1.5, 0.0), 0.03),
+];
+
+/// Hacia dónde salen los rayos de las riendas sobre el cuello, del lado `s`:
+/// casi de costado, así se apoyan a media altura y no sobre la crin.
+fn rest_dir(s: f32) -> Vec3 {
+    Vec3::new(0.0, 0.3, s).normalize()
+}
+
+/// El rayo desde dentro del cuello hacia su costado, del lado `s`, del punto
+/// `k` de [`NECK_RESTS`].
+pub fn neck_ray(k: usize, s: f32) -> (Vec3, Vec3) {
+    (NECK_RESTS[k].0, rest_dir(s))
+}
+
+/// El rayo desde dentro del pie del cuello hacia su costado, del lado `s`:
+/// ahí se apoyan las riendas antes de la montura. Va con la cruz, no con el
+/// cuello: el pie del cuello gira con la cabeza, y al bajarla llevaría la
+/// rienda a través de la cruz.
+pub fn withers_ray(s: f32) -> (Vec3, Vec3) {
+    (Vec3::new(0.6, 1.45, 0.0), rest_dir(s))
 }
 
 /// El rayo desde dentro de la cabeza hacia la quijada del lado `s`, donde la
@@ -1351,7 +1382,7 @@ pub fn neck_ray(s: f32) -> (Vec3, Vec3) {
 /// mejilla.
 pub fn jowl_ray(s: f32) -> (Vec3, Vec3) {
     (
-        Vec3::new(1.12, 1.62, 0.0),
+        Vec3::new(1.237, 1.634, 0.0),
         Vec3::new(0.0, -0.2, s).normalize(),
     )
 }
@@ -1366,8 +1397,10 @@ pub struct Fittings {
     /// Por dónde pasan las riendas junto a las quijadas, desde el freno hacia
     /// atrás (en la cabeza).
     pub jowl: [Vec3; 2],
-    /// Dónde se apoyan a lo largo del cuello (en su hueso central).
-    pub neck: [Vec3; 2],
+    /// Dónde se apoyan a lo largo del costado del cuello ([`NECK_RESTS`]) y
+    /// en la cruz.
+    pub neck: [[Vec3; 2]; 3],
+    pub withers: [Vec3; 2],
     /// Dónde descansan las riendas en un caballo sin jinete: en la cabezada.
     pub pommel: [Vec3; 2],
     /// Dónde salen las aciones por debajo del pellón.
@@ -1376,6 +1409,23 @@ pub struct Fittings {
     pub hanging: [Vec3; 2],
     /// La parte superior del pellón, donde se sienta el jinete.
     pub seat: Vec3,
+}
+
+impl Fittings {
+    /// Por dónde pasa la rienda del lado `s` (0 izquierda, 1 derecha), en el
+    /// marco del cuerpo: del freno a la quijada, a lo largo del cuello, por la
+    /// cruz y a la montura.
+    pub fn rein_path(&self, s: usize) -> [Vec3; REIN_STRETCHES + 1] {
+        [
+            self.bit[s],
+            self.jowl[s],
+            self.neck[0][s],
+            self.neck[1][s],
+            self.neck[2][s],
+            self.withers[s],
+            self.pommel[s],
+        ]
+    }
 }
 
 /// Cuánto detrás de la cinchera se sienta el jinete: el punto más bajo del
@@ -1396,7 +1446,9 @@ impl Fittings {
         };
         // Un poco separadas de la piel: el cuello se arquea en las esperas.
         let jowl = side(&|s| out(jowl_ray(s), 0.04))?;
-        let neck = side(&|s| out(neck_ray(s), 0.05))?;
+        let neck = [0, 1, 2].map(|k| side(&|s| out(neck_ray(k, s), NECK_RESTS[k].1)));
+        let neck = [neck[0]?, neck[1]?, neck[2]?];
+        let withers = side(&|s| out(withers_ray(s), 0.04))?;
         // Sobre la cara de arriba del recado, o a la altura del asiento sobre
         // el lomo sin él.
         let top = |x: f32, theta: f32, extra: f32| {
@@ -1417,12 +1469,13 @@ impl Fittings {
         let hanging = side(&|s| {
             let (origin, dir) = barrel.ray(0.08, s * FRAC_PI_2);
             let flank = horse.cast(origin, dir)?;
-            Some(Vec3::new(0.08, 0.98, s * (flank.point.z.abs() + 0.06)))
+            Some(Vec3::new(origin.x, 0.98, s * (flank.point.z.abs() + 0.06)))
         })?;
         Some(Self {
             bit,
             jowl,
             neck,
+            withers,
             pommel,
             leather,
             hanging,
@@ -1542,11 +1595,12 @@ impl TackPaints {
 }
 
 /// Las correas de los aperos: un tramo de rienda por cada tramo (del freno a
-/// la quijada, de la quijada al cuello y del cuello a la mano o la montura) y
-/// la ación, cada una con su trenza o su suela repetidas según su largo.
+/// la quijada, de ahí a lo largo del cuello hasta la cruz y de ahí a la mano o
+/// la montura: [`REIN_STRETCHES`]) y la ación, cada una con su trenza o su
+/// suela repetidas según su largo.
 #[derive(Debug, Clone)]
 pub struct TackStraps {
-    pub reins: [Handle<Mesh>; 3],
+    pub reins: [Handle<Mesh>; REIN_STRETCHES],
     pub leather: Handle<Mesh>,
 }
 
@@ -1600,9 +1654,15 @@ pub struct StrapPart {
 /// En cuántos tramos rectos se dibuja una correa que cuelga.
 pub const SAG_PARTS: usize = 5;
 
-/// Cuánto cuelgan las riendas: de la quijada al cuello, y del cuello a la
-/// mano del jinete o a la montura (del freno a la quijada van tirantes).
-pub const REIN_SAG: [f32; 3] = [0.0, 0.0, 0.07];
+/// En cuántos tramos va cada rienda: del freno a la quijada, de la quijada a
+/// lo largo del cuello ([`NECK_RESTS`]) hasta la cruz, y de ahí a la mano del
+/// jinete o a la montura.
+pub const REIN_STRETCHES: usize = 6;
+
+/// Cuánto cuelga cada tramo de las riendas: tirantes sobre la cabeza, flojos
+/// a lo largo del cuello, y el último, de la cruz a la mano o a la montura,
+/// más todavía.
+pub const REIN_SAG: [f32; REIN_STRETCHES] = [0.0, 0.0, 0.02, 0.02, 0.02, 0.07];
 
 /// Los `n + 1` puntos de una correa de `a` a `b` que cuelga `sag` (de su
 /// largo) en el medio: una parábola hacia abajo, como una catenaria poco
@@ -1641,22 +1701,48 @@ pub struct Tack {
 /// Los huesos de los que cuelgan los aperos y el jinete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HorseBone {
-    /// El centro del lomo, bajo la montura.
+    /// El centro del lomo, bajo la montura ([`HorseJoint::Back`]).
     Torso,
-    /// El centro del cuello.
-    Neck2,
+    /// Los del cuello sobre los que se apoyan las riendas
+    /// ([`HorseJoint::Neck`]).
+    Neck(usize),
+    /// La cruz ([`HorseJoint::Withers`]).
+    Withers,
+    /// La cabeza, desde la nuca ([`HorseJoint::Poll`]).
     Head,
 }
 
 impl HorseBone {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Torso => "Torso",
-            Self::Neck2 => "Neck2",
-            Self::Head => "Head",
+            Self::Torso => HorseJoint::Back.name(),
+            Self::Neck(k) => HorseJoint::Neck(k).name(),
+            Self::Withers => HorseJoint::Withers.name(),
+            Self::Head => HorseJoint::Poll.name(),
         }
     }
 }
+
+/// Los huesos de los que cuelgan las correas y los estribos, en orden: el
+/// torso, los tres del cuello, la cruz y la cabeza.
+pub const TACK_BONES: [HorseBone; 6] = [
+    HorseBone::Torso,
+    HorseBone::Neck(0),
+    HorseBone::Neck(1),
+    HorseBone::Neck(2),
+    HorseBone::Withers,
+    HorseBone::Head,
+];
+
+/// Los materiales de la piel del caballo: el cuerpo, sin la crin (`Hair`),
+/// las córneas (`Cornea`) ni las herraduras (`Horseshoe`).
+pub const HORSE_SKIN: [&str; 1] = ["Horse"];
+
+/// El material de los ojos del caballo, que los aperos rodean.
+pub const HORSE_EYES: &str = "Cornea";
+
+/// Las puntas de las orejas del caballo: los extremos de sus huesos.
+pub const EAR_TIPS: [&str; 2] = ["BN_L_Ear_01_024_end_080", "BN_R_Ear_01_026_end_081"];
 
 /// Aquello a lo que se ajustan los aperos en la escena de un caballo: los
 /// nombres y los reposos de sus nodos, y cada primitiva con skinning con su
@@ -1756,6 +1842,30 @@ fn rest_in(
     affine
 }
 
+/// Cómo está parado el caballo sobre el que se modeló el recado (henry al
+/// empezar `Idle_1`, con la cabeza alta: el reposo de los nodos de su glTF
+/// la tiene junto a los vasos): el reposo de cada articulación del esqueleto
+/// del recado, por su nombre, en el marco de su archivo (la inversa de su
+/// pose de bind). `None` si el archivo no cargó.
+fn recado_pose(stores: &TackStores) -> Option<HashMap<String, Affine3A>> {
+    let handle = stores.recado.as_ref()?.0.as_ref()?;
+    let (gltfs, _, skins, nodes) = &stores.gltf;
+    let (gltfs, skins, nodes) = (gltfs.as_ref()?, skins.as_ref()?, nodes.as_ref()?);
+    let skin = skins.get(gltfs.get(handle)?.skins.first()?)?;
+    let binds = stores
+        .bindposes
+        .as_ref()?
+        .get(&skin.inverse_bind_matrices)?;
+    skin.joints
+        .iter()
+        .zip(binds.iter())
+        .map(|(joint, ibm)| {
+            let name = nodes.get(joint)?.name.clone();
+            Some((name, Affine3A::from_mat4(*ibm).inverse()))
+        })
+        .collect()
+}
+
 /// El recado modelado, en el marco del cuerpo del caballo en reposo, a
 /// partir de su archivo: cada mesh llevada a las articulaciones del caballo
 /// del mismo nombre (`names`, con su reposo `rest` en el marco del cuerpo).
@@ -1804,18 +1914,34 @@ pub struct LocalFittings {
     /// En la cabeza.
     pub bit: [Vec3; 2],
     pub jowl: [Vec3; 2],
-    /// En `Neck2`.
-    pub neck: [Vec3; 2],
+    /// En cada hueso del cuello ([`HorseBone::Neck`]) y en la cruz.
+    pub neck: [[Vec3; 2]; 3],
+    pub withers: [Vec3; 2],
     /// En el torso, como el resto.
     pub pommel: [Vec3; 2],
     pub leather: [Vec3; 2],
     pub hanging: [Transform; 2],
 }
 
+impl LocalFittings {
+    /// [`Fittings::rein_path`], cada punto en el espacio de su hueso.
+    pub fn rein_path(&self, s: usize) -> [Vec3; REIN_STRETCHES + 1] {
+        [
+            self.bit[s],
+            self.jowl[s],
+            self.neck[0][s],
+            self.neck[1][s],
+            self.neck[2][s],
+            self.withers[s],
+            self.pommel[s],
+        ]
+    }
+}
+
 /// Los accesorios en los espacios de los huesos, a partir de sus ubicaciones de
-/// reposo `rest` (la del torso, la del cuello y la de la cabeza).
-pub fn local_fittings(f: &Fittings, rest: [Affine3A; 3]) -> LocalFittings {
-    let [torso, neck, head] = rest.map(|a| a.inverse());
+/// reposo `rest` (en el orden de [`TACK_BONES`]).
+pub fn local_fittings(f: &Fittings, rest: [Affine3A; 6]) -> LocalFittings {
+    let [torso, n0, n1, n2, base, head] = rest.map(|a| a.inverse());
     let on = |a: Affine3A, p: [Vec3; 2]| p.map(|p| a.transform_point3(p));
     let hang = |p: Vec3| {
         transform_of(
@@ -1830,7 +1956,8 @@ pub fn local_fittings(f: &Fittings, rest: [Affine3A; 3]) -> LocalFittings {
     LocalFittings {
         bit: on(head, f.bit),
         jowl: on(head, f.jowl),
-        neck: on(neck, f.neck),
+        neck: [on(n0, f.neck[0]), on(n1, f.neck[1]), on(n2, f.neck[2])],
+        withers: on(base, f.withers),
         pommel: on(torso, f.pommel),
         leather: on(torso, f.leather),
         hanging: f.hanging.map(hang),
@@ -1873,10 +2000,21 @@ fn build_tack(
     joints: &[Entity],
     bindposes: &Handle<SkinnedMeshInverseBindposes>,
 ) -> Option<HorseTack> {
-    let rest: Vec<Affine3A> = joints
-        .iter()
-        .map(|j| rest_in(*j, root, &scene.parents, at_rest))
-        .collect();
+    // El caballo parado como el del recado modelado (cada articulación en el
+    // marco del cuerpo, a través del nodo raíz del modelo), o sin él, en el
+    // reposo de su escena.
+    let pose = recado_pose(stores);
+    let model = at_rest
+        .get(&root)
+        .map_or(Affine3A::IDENTITY, Transform::compute_affine);
+    let posed = |e: Entity| {
+        let name = scene.names.get(e).map(|n| n.as_str()).unwrap_or_default();
+        match pose.as_ref().and_then(|p| p.get(name)) {
+            Some(a) => model * *a,
+            None => rest_in(e, root, &scene.parents, at_rest),
+        }
+    };
+    let rest: Vec<Affine3A> = joints.iter().map(|j| posed(*j)).collect();
     let inverse_binds = stores.bindposes.as_ref()?.get(bindposes)?;
     let skin: Vec<Affine3A> = rest
         .iter()
@@ -1894,27 +2032,25 @@ fn build_tack(
         };
         let name = name.map_or("", |n| n.0.as_str());
         // Los ojos sobresalen de la cara; los aperos los rodean.
-        if name.starts_with("Eye") {
-            if name == "Eye_White" {
-                let mut eye = RestHorse::default();
-                eye.add(mesh, &skin);
-                measured.eyes.extend(eye.positions);
-            }
-            continue;
+        if name == HORSE_EYES {
+            let mut eye = RestHorse::default();
+            eye.add(mesh, &skin);
+            measured.eyes.extend(eye.positions);
         }
-        horse.add(mesh, &skin);
-        if ["Main", "Main_Dark", "Main_Light", "Muzzle", "Hooves"].contains(&name) {
+        // Solo la piel: las tarjetas de la crin y del copete cuelgan sobre el
+        // cuello y la frente, y se mueven solas.
+        if HORSE_SKIN.contains(&name) {
+            horse.add(mesh, &skin);
             measured.skin.add(mesh, &skin);
         }
     }
-    for ear in ["Ear4.L", "Ear4.R"] {
+    for ear in EAR_TIPS {
         if let Some(e) = scene
             .children
             .iter_descendants(root)
             .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == ear))
         {
-            let tip = rest_in(e, root, &scene.parents, at_rest);
-            measured.ear_tips.push(tip.translation.into());
+            measured.ear_tips.push(posed(e).translation.into());
         }
     }
     let names: Vec<String> = joints
@@ -1941,12 +2077,11 @@ fn build_tack(
             .children
             .iter_descendants(root)
             .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == b.name()))
-            .map(|e| rest_in(e, root, &scene.parents, at_rest))
+            .map(posed)
     };
+    let bones = TACK_BONES.map(bone);
     let bones = [
-        bone(HorseBone::Torso)?,
-        bone(HorseBone::Neck2)?,
-        bone(HorseBone::Head)?,
+        bones[0]?, bones[1]?, bones[2]?, bones[3]?, bones[4]?, bones[5]?,
     ];
     let inverse: Vec<Mat4> = rest.iter().map(|r| Mat4::from(r.inverse())).collect();
     let paints = tack_paints(stores);
@@ -1960,8 +2095,7 @@ fn build_tack(
             (piece, name, handle, paints.of(piece))
         })
         .collect();
-    let f = &fittings;
-    let length = |a: [Vec3; 2], b: [Vec3; 2]| a[0].distance(b[0]);
+    let path = fittings.rein_path(0);
     // La trenza de las riendas: un chevrón cada ~1.4 cm (16 por vuelta del
     // mapa); la suela de las aciones, sin repetirse a lo largo.
     // Una rienda que cuelga se dibuja en tramos: cada uno, su parte.
@@ -1970,13 +2104,10 @@ fn build_tack(
         strap_mesh(REIN_SIDES, 1.0, (0.0, 0.5), metres / 0.22 / parts as f32)
     };
     let straps = TackStraps {
-        reins: [
-            stores.meshes.add(rein(length(f.bit, f.jowl), REIN_SAG[0])),
-            stores.meshes.add(rein(length(f.jowl, f.neck), REIN_SAG[1])),
-            stores
-                .meshes
-                .add(rein(length(f.neck, f.pommel), REIN_SAG[2])),
-        ],
+        reins: std::array::from_fn(|k| {
+            let metres = path[k].distance(path[k + 1]);
+            stores.meshes.add(rein(metres, REIN_SAG[k]))
+        }),
         leather: stores
             .meshes
             .add(strap_mesh(LEATHER_SIDES, LEATHER_DEPTH, (0.2, 0.8), 0.6)),
@@ -2087,7 +2218,8 @@ fn dress(
     // de los que cuelgan las correas: todo verificado antes de quitar nada.
     let skin = scene.children.iter_descendants(root).find_map(|e| {
         let (skin, _, name) = scene.skins.get(e).ok()?;
-        name.is_some_and(|n| n.0 == "Main").then(|| skin.clone())
+        name.is_some_and(|n| HORSE_SKIN.contains(&n.0.as_str()))
+            .then(|| skin.clone())
     });
     let bone = |b: HorseBone| {
         scene
@@ -2095,11 +2227,7 @@ fn dress(
             .iter_descendants(root)
             .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == b.name()))
     };
-    let bones = (
-        bone(HorseBone::Torso),
-        bone(HorseBone::Neck2),
-        bone(HorseBone::Head),
-    );
+    let bones = TACK_BONES.map(bone);
     for &child in scene.children.get(carrier).into_iter().flatten() {
         if pieces.contains(child) {
             commands.entity(child).try_despawn();
@@ -2109,7 +2237,8 @@ fn dress(
     for stirrup in worn.get(carrier).map(|t| t.stirrups).into_iter().flatten() {
         commands.entity(stirrup).try_despawn();
     }
-    let (Some(skin), (Some(torso), Some(neck), Some(head))) = (skin, bones) else {
+    let (Some(skin), [Some(t), Some(n0), Some(n1), Some(n2), Some(w), Some(h)]) = (skin, bones)
+    else {
         warn!("horse model without its body's skin or its torso, neck and head: no tack");
         commands.entity(carrier).try_remove::<Tack>();
         return;
@@ -2129,18 +2258,18 @@ fn dress(
         commands.entity(carrier).try_remove::<Tack>();
         return;
     };
-    put_on_tack(commands, tack, carrier, &skin, [torso, neck, head]);
+    put_on_tack(commands, tack, carrier, &skin, [t, n0, n1, n2, w, h]);
 }
 
 /// Pone los aperos compartidos en el caballo `carrier`: las carcasas con
 /// skinning en las articulaciones de su `skin`, los estribos colgando del torso
-/// y las correas (en el orden torso, cuello, cabeza: `bones`).
+/// y las correas (sus huesos `bones`, en el orden de [`TACK_BONES`]).
 fn put_on_tack(
     commands: &mut Commands,
     tack: &HorseTack,
     carrier: Entity,
     skin: &SkinnedMesh,
-    [torso, neck, head]: [Entity; 3],
+    bones: [Entity; 6],
 ) {
     let range = model_range();
     let kit = &tack.kit;
@@ -2201,32 +2330,24 @@ fn put_on_tack(
         };
     let mut reins = [Entity::PLACEHOLDER; 2];
     let mut stirrups = [Entity::PLACEHOLDER; 2];
-    let [bit, jowl, neck_rein] = &kit.straps.reins;
+    let [torso, n0, n1, n2, base, head] = bones;
+    // El hueso que lleva cada punto del camino de las riendas.
+    let carriers = [head, head, n0, n1, n2, base, torso];
     for s in 0..2 {
-        spawn_strap(
-            commands,
-            HorsePiece::Rein,
-            [(head, local.bit[s]), (head, local.jowl[s])],
-            REIN,
-            REIN_SAG[0],
-            bit,
-        );
-        spawn_strap(
-            commands,
-            HorsePiece::Rein,
-            [(head, local.jowl[s]), (neck, local.neck[s])],
-            REIN,
-            REIN_SAG[1],
-            jowl,
-        );
-        reins[s] = spawn_strap(
-            commands,
-            HorsePiece::Rein,
-            [(neck, local.neck[s]), (torso, local.pommel[s])],
-            REIN,
-            REIN_SAG[2],
-            neck_rein,
-        );
+        let path = local.rein_path(s);
+        for k in 0..REIN_STRETCHES {
+            let stretch = spawn_strap(
+                commands,
+                HorsePiece::Rein,
+                [(carriers[k], path[k]), (carriers[k + 1], path[k + 1])],
+                REIN,
+                REIN_SAG[k],
+                &kit.straps.reins[k],
+            );
+            if k == REIN_STRETCHES - 1 {
+                reins[s] = stretch;
+            }
+        }
         stirrups[s] = commands
             .spawn((
                 Name::new("Stirrup"),
@@ -2465,6 +2586,10 @@ fn tack_paints(stores: &mut TackStores) -> TackPaints {
 pub(crate) mod tests {
     use super::*;
 
+    /// La altura del eje del costillar, alrededor del que se construye el
+    /// caballo sustituto.
+    const AXIS_Y: f32 = Axis::BARREL.origin.y;
+
     /// Un caballo sustituto: un tubo cerrado a lo largo de +X alrededor del eje
     /// del costillar (radio 0.28, de -0.8 a 0.8 m), con su piel pasando de la
     /// articulación 0 atrás a la articulación 1 adelante, un tubo con forma de
@@ -2507,10 +2632,10 @@ pub(crate) mod tests {
         };
         tube(Axis::BARREL, (-0.8, 0.8), 0.28, None);
         tube(Axis::head(), (-0.1, 0.55), 0.13, Some(2));
-        let neck = Vec3::new(0.64, 0.768, 0.0);
+        let neck = Vec3::new(0.94, 0.342, 0.0);
         tube(
             Axis {
-                origin: Vec3::new(0.6, 1.2, 0.0),
+                origin: Vec3::new(0.56, 1.44, 0.0),
                 along: neck,
                 up: Vec3::new(-neck.y, neck.x, 0.0),
             },
@@ -2529,7 +2654,7 @@ pub(crate) mod tests {
         // El tramo plano del polígono entre esquinas queda un poco dentro del
         // círculo sobre el que se construye.
         assert!((hit.distance - 0.28).abs() < 0.01, "{hit:?}");
-        assert!((hit.point.x - 0.4).abs() < 1e-4);
+        assert!((hit.point.x - (Axis::BARREL.origin.x + 0.4)).abs() < 1e-4);
         // A un cuarto del camino desde adelante: 75% la articulación delantera.
         let front = hit.skin.joints.iter().position(|j| *j == 1).unwrap();
         assert!((hit.skin.weights[front] - 0.75).abs() < 0.02, "{hit:?}");
@@ -2551,7 +2676,7 @@ pub(crate) mod tests {
         let (mut middle, mut rim) = (0, 0);
         for k in 0..face {
             let (outer, inner) = (mesh.positions[k], mesh.positions[face + k]);
-            let off = |p: Vec3| Vec2::new(p.y - 1.14, p.z).length() - 0.28;
+            let off = |p: Vec3| Vec2::new(p.y - AXIS_Y, p.z).length() - 0.28;
             assert!(
                 (off(inner) - shell.offset.at(0.0)).abs() < 0.012,
                 "{} at {inner}",
@@ -2657,10 +2782,10 @@ pub(crate) mod tests {
             mesh.positions.iter().map(|p| p.y).fold(f32::MAX, f32::min)
         };
         assert!(
-            lowest(Cinchon) < lowest(Cincha) && lowest(Cincha) < 1.14 - 0.28,
+            lowest(Cinchon) < lowest(Cincha) && lowest(Cincha) < AXIS_Y - 0.28,
             "under the belly"
         );
-        let below = |p: Vec3| Vec2::new(p.y - 1.14, p.z).length() - 0.28;
+        let below = |p: Vec3| Vec2::new(p.y - AXIS_Y, p.z).length() - 0.28;
         let reach = |piece, fold: fn(f32, f32) -> f32, start| {
             let (mesh, _) = fitted(piece);
             mesh.positions
@@ -2708,7 +2833,10 @@ pub(crate) mod tests {
             ("Cojinillo".into(), mesh),
             ("Mark_ReinL".into(), mark(Vec3::new(1.3, 1.4, -0.06))),
             ("Mark_ReinR".into(), mark(Vec3::new(1.3, 1.4, 0.06))),
-            ("Mark_Seat".into(), mark(Vec3::new(SEAT_X, 1.54, 0.0))),
+            (
+                "Mark_Seat".into(),
+                mark(Vec3::new(SEAT_X, AXIS_Y + 0.4, 0.0)),
+            ),
         ])
         .unwrap()
     }
@@ -2730,15 +2858,18 @@ pub(crate) mod tests {
             .iter()
             .map(|p| p.y)
             .fold(f32::MIN, f32::max);
-        assert!((top - (1.14 + 0.4 + 0.003 + 0.005)).abs() < 0.004, "{top}");
+        assert!(
+            (top - (AXIS_Y + 0.4 + 0.003 + 0.005)).abs() < 0.004,
+            "{top}"
+        );
         let f = Fittings::find(&horse, Some(&recado)).unwrap();
-        assert_eq!(f.seat, Vec3::new(SEAT_X, 1.54, 0.0));
+        assert_eq!(f.seat, Vec3::new(SEAT_X, AXIS_Y + 0.4, 0.0));
         assert_eq!(
             f.bit,
             [Vec3::new(1.3, 1.4, -0.06), Vec3::new(1.3, 1.4, 0.06)]
         );
         for s in 0..2 {
-            let off = Vec2::new(f.pommel[s].y - 1.14, f.pommel[s].z).length();
+            let off = Vec2::new(f.pommel[s].y - AXIS_Y, f.pommel[s].z).length();
             assert!(
                 (off - 0.41).abs() < 0.003,
                 "the reins rest on the recado: {off}"
@@ -2747,7 +2878,7 @@ pub(crate) mod tests {
         // Sin el recado, las riendas salen de la boca y el jinete se sienta a
         // la altura del recado sobre el lomo.
         let bare = Fittings::find(&horse, None).unwrap();
-        let seat = Vec2::new(bare.seat.y - 1.14, bare.seat.z).length() - 0.28;
+        let seat = Vec2::new(bare.seat.y - AXIS_Y, bare.seat.z).length() - 0.28;
         assert!((seat - SEAT_RISE).abs() < 0.012, "{seat}");
     }
 
@@ -2981,13 +3112,30 @@ pub(crate) mod tests {
         })
     }
 
+    /// Cada mesh dibujada bajo `me` ([`cpu::drawn`]), salvo las que tienen
+    /// skinning en articulaciones que ya no están: los aperos de una escena
+    /// del caballo creada de nuevo, el frame antes de que se vista la nueva
+    /// (sin sus articulaciones se dibujarían en reposo, no donde los lleva el
+    /// caballo).
+    pub(crate) fn drawn_on_their_joints(world: &mut World, me: Entity) -> Vec<cpu::Drawn> {
+        let mut drawn = cpu::drawn(world, Some(me));
+        drawn.retain(|d| {
+            world.get::<SkinnedMesh>(d.entity).is_none_or(|s| {
+                s.joints
+                    .iter()
+                    .all(|j| world.get::<GlobalTransform>(*j).is_some())
+            })
+        });
+        drawn
+    }
+
     /// La piel del caballo (los materiales de su cuerpo, no su crin ni sus
     /// ojos) en `drawn`: posiciones y triángulos, fusionados.
     pub(crate) fn horse_skin(drawn: &[cpu::Drawn]) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         let mut positions = Vec::new();
         let mut triangles = Vec::new();
         for d in drawn {
-            if ["Main", "Main_Dark", "Main_Light", "Muzzle", "Hooves"].contains(&d.name.as_str()) {
+            if HORSE_SKIN.contains(&d.name.as_str()) {
                 let base = positions.len() as u32;
                 positions.extend(&d.positions);
                 triangles.extend(d.triangles.iter().map(|t| t.map(|i| i + base)));
@@ -3116,7 +3264,7 @@ pub(crate) mod tests {
         let (mut wool, mut rider) = (f32::MAX, f32::MAX);
         for _ in 0..frames {
             app.update();
-            let drawn = cpu::drawn(app.world_mut(), Some(me));
+            let drawn = drawn_on_their_joints(app.world_mut(), me);
             let (skin, tris) = horse_skin(&drawn);
             let near_skin = Near::new(&skin, &tris);
             let (mut seat, mut seat_tris) = (Vec::new(), Vec::new());
@@ -3129,7 +3277,8 @@ pub(crate) mod tests {
                     let [a, b, c] = t.map(|i| d.positions[i as usize]);
                     let normal = (b - a).cross(c - a).normalize_or_zero();
                     let centre = (a + b + c) / 3.0;
-                    let out = Vec3::new(0.0, centre.y - 1.14, centre.z).normalize_or_zero();
+                    let out = Vec3::new(0.0, centre.y - Axis::BARREL.origin.y, centre.z)
+                        .normalize_or_zero();
                     (normal.dot(out) > 0.3).then(|| t.map(|i| i + base))
                 }));
                 for p in &d.positions {
@@ -3155,14 +3304,10 @@ pub(crate) mod tests {
     pub(crate) fn clearances(app: &mut App, me: Entity, frames: usize) -> (f32, f32, Vec<String>) {
         let shells = TACK_SHELLS;
         let not_rider = [
-            "Main",
-            "Main_Dark",
-            "Main_Light",
-            "Muzzle",
-            "Hooves",
+            "Horse",
             "Hair",
-            "Eye_Black",
-            "Eye_White",
+            "Cornea",
+            "Horseshoe",
             "Rein",
             "StirrupLeather",
             "Stirrup",
@@ -3173,7 +3318,7 @@ pub(crate) mod tests {
         let mut closest = String::new();
         for _ in 0..frames {
             app.update();
-            let drawn = cpu::drawn(app.world_mut(), Some(me));
+            let drawn = drawn_on_their_joints(app.world_mut(), me);
             let (skin, tris) = horse_skin(&drawn);
             let near = Near::new(&skin, &tris);
             for d in &drawn {
@@ -3192,7 +3337,7 @@ pub(crate) mod tests {
                         continue;
                     };
                     if is_tack && s < tack {
-                        closest = d.name.clone();
+                        closest = format!("{} at {p:.3}", d.name);
                     }
                     let worst = if is_tack { &mut tack } else { &mut rider };
                     *worst = worst.min(s);
@@ -3204,6 +3349,15 @@ pub(crate) mod tests {
                 let at = |(e, p): (Entity, Vec3)| {
                     world.get::<GlobalTransform>(e).unwrap().transform_point(p)
                 };
+                // Una correa con un extremo que ya no está (una escena creada
+                // de nuevo, antes de que se vista) no se dibuja.
+                if strap
+                    .ends
+                    .iter()
+                    .any(|(e, _)| world.get::<GlobalTransform>(*e).is_none())
+                {
+                    continue;
+                }
                 // Por cada tramo de la curva en la que cuelga.
                 let curve = strap_curve(at(strap.ends[0]), at(strap.ends[1]), strap.sag, SAG_PARTS);
                 if curve.windows(2).any(|w| crosses(w[0], w[1], &skin, &tris)) {
@@ -3271,11 +3425,11 @@ pub(crate) mod tests {
             .iter(world)
             .filter(|(p, _)| **p == HorsePiece::Rein)
             .count();
-        assert_eq!(reins, 6, "three stretches a side");
+        assert_eq!(reins, 2 * REIN_STRETCHES, "six stretches a side");
         let main = world
             .query::<(&SkinnedMesh, &bevy::gltf::GltfMaterialName)>()
             .iter(world)
-            .find(|(_, n)| n.0 == "Main")
+            .find(|(_, n)| HORSE_SKIN.contains(&n.0.as_str()))
             .map(|(s, _)| s.joints.clone())
             .unwrap();
         for (piece, _, skin, _) in pieces.iter(world) {
@@ -3397,13 +3551,15 @@ pub(crate) mod tests {
         app.update();
         assert!(whole_tack(&mut app, me).is_some());
         assert_eq!(count(&mut app, HorsePiece::Stirrup), 2);
-        assert_eq!(count(&mut app, HorsePiece::Rein), 6);
+        assert_eq!(count(&mut app, HorsePiece::Rein), 2 * REIN_STRETCHES);
         // Sin su hueso del torso: sin aperos, y ninguno a medias.
         let world = app.world_mut();
         let torso = world
             .query::<(Entity, &Name)>()
             .iter(world)
-            .find(|(e, n)| n.as_str() == "Torso" && world.get::<ChildOf>(*e).is_some())
+            .find(|(e, n)| {
+                n.as_str() == HorseBone::Torso.name() && world.get::<ChildOf>(*e).is_some()
+            })
             .map(|(e, _)| e)
             .unwrap();
         world.entity_mut(torso).insert(Name::new("Torso.lost"));
@@ -3579,7 +3735,9 @@ pub(crate) mod tests {
     /// lomo (cada uno por su mesh y su índice) y la piel más cercana a cada
     /// uno, al empezar.
     struct Drift {
-        torso: Entity,
+        /// El cuerpo del caballo: su torso es el de sus aperos de ahora (una
+        /// escena creada de nuevo trae huesos nuevos).
+        carrier: Entity,
         back: Vec<((String, usize), Vec3, usize, Vec3)>,
     }
 
@@ -3618,7 +3776,7 @@ pub(crate) mod tests {
         fn start(app: &mut App, me: Entity) -> Self {
             let carrier = app.world().get::<Children>(me).unwrap()[0];
             let torso = app.world().get::<Tack>(carrier).unwrap().torso;
-            let drawn = cpu::drawn(app.world_mut(), Some(me));
+            let drawn = drawn_on_their_joints(app.world_mut(), me);
             let (back, skin) = back_and_skin(app.world(), torso, &drawn);
             let world_of: HashMap<String, Vec<Vec3>> = drawn
                 .iter()
@@ -3629,7 +3787,7 @@ pub(crate) mod tests {
                 for (i, p) in points.iter().enumerate() {
                     // Del cinchón, la parte de arriba, sobre el recado: bajo la
                     // panza sigue la piel, que las manos mueven al galope.
-                    if name == "Cinchon" && world_of[name][i].y < 1.2 {
+                    if name == "Cinchon" && world_of[name][i].y < Axis::BARREL.origin.y + 0.06 {
                         continue;
                     }
                     let (k, q) = skin
@@ -3643,7 +3801,7 @@ pub(crate) mod tests {
                     out.push(((name.clone(), i), *p, k, *q));
                 }
             }
-            Self { torso, back: out }
+            Self { carrier, back: out }
         }
 
         /// Cuánto más que la piel de debajo se movió, como máximo, un vertex
@@ -3653,12 +3811,23 @@ pub(crate) mod tests {
             let mut worst = (0.0f32, String::new());
             for _ in 0..frames {
                 app.update();
-                let drawn = cpu::drawn(app.world_mut(), Some(me));
-                let (back, skin) = back_and_skin(app.world(), self.torso, &drawn);
+                let drawn = drawn_on_their_joints(app.world_mut(), me);
+                // Sin aperos completos (la escena, creada de nuevo, espera
+                // los suyos), nada que medir este frame.
+                let Some(torso) = app.world().get::<Tack>(self.carrier).map(|t| t.torso) else {
+                    continue;
+                };
+                if app.world().get::<GlobalTransform>(torso).is_none() {
+                    continue;
+                }
+                let (back, skin) = back_and_skin(app.world(), torso, &drawn);
                 for ((name, i), was, k, skin_was) in &self.back {
-                    let moved = back[name][*i].distance(*was) - skin[*k].distance(*skin_was);
+                    let Some(now) = back.get(name) else {
+                        continue;
+                    };
+                    let moved = now[*i].distance(*was) - skin[*k].distance(*skin_was);
                     if moved > worst.0 {
-                        worst = (moved, name.clone());
+                        worst = (moved, format!("{name} at {was:.2} in the torso"));
                     }
                 }
             }
@@ -3757,9 +3926,122 @@ pub(crate) mod tests {
                 .get::<ChildOf>(tack.stirrups[s])
                 .unwrap()
                 .parent();
-            assert_eq!(app.world().get::<Name>(hung).unwrap().as_str(), "Torso");
+            assert_eq!(
+                app.world().get::<Name>(hung).unwrap().as_str(),
+                HorseBone::Torso.name()
+            );
             let rein = app.world().get::<Strap>(tack.reins[s]).unwrap();
             assert_eq!(rein.ends[1].0, hung, "to the pommel");
+        }
+    }
+
+    /// Cuánto puede separarse de la piel una rienda floja de un caballo atado,
+    /// entre la quijada y la cruz: se apoya sobre el costado del cuello, bajo
+    /// la crin, y no se tiende por el aire cuando la cabeza baja.
+    const REIN_OFF_NECK: f32 = 0.07;
+
+    /// Cuánto puede moverse, respecto del torso, el punto de la cruz donde se
+    /// apoyan las riendas en las esperas: va con la cruz, que se dobla sobre
+    /// el lomo (medido: de 6 a 13 cm en `Idle_1`, según el cuadro), no con el
+    /// pie del cuello, que gira con la cabeza (lo llevaría 80 cm).
+    const WITHERS_REST_DRIFT: f32 = 0.25;
+
+    #[test]
+    fn a_tied_horses_slack_reins_lie_along_the_neck_and_rest_on_the_withers() {
+        let (mut app, me) = saddled(CharacterVisual::Horse(Coat::Zaino), 0.0);
+        // La escena del caballo puede volver a armarse a mitad del test: su
+        // portador se lee de nuevo en cada idle y en cada frame.
+        let carrier_of = |app: &App| app.world().get::<Children>(me).map(|c| c[0]);
+        for idle in TIED_IDLES {
+            let carrier = carrier_of(&app).expect("the horse carrier");
+            let clock = app.world().resource::<Time>().elapsed_secs();
+            let mut body = app.world().get::<HorseBody>(carrier).unwrap().clone();
+            body.seed = (0..1000)
+                .find(|&seed| {
+                    let body = HorseBody {
+                        seed,
+                        ..body.clone()
+                    };
+                    (0..120).all(|k| body.idle(clock + k as f32 * 0.05) == idle)
+                })
+                .expect("a seed that picks it");
+            app.world_mut().entity_mut(carrier).insert(body);
+            for _ in 0..30 {
+                app.update();
+            }
+            let (mut off, mut drift) = (0.0f32, 0.0f32);
+            let mut start: Option<[Vec3; 2]> = None;
+            for _ in 0..40 {
+                app.update();
+                let drawn = drawn_on_their_joints(app.world_mut(), me);
+                let (skin, tris) = horse_skin(&drawn);
+                if tris.is_empty() {
+                    continue;
+                }
+                let near = Near::new(&skin, &tris);
+                let Some(carrier) = carrier_of(&app) else {
+                    continue;
+                };
+                let world = app.world_mut();
+                let Some(tack) = world.get::<Tack>(carrier).copied() else {
+                    continue;
+                };
+                let straps: Vec<(Entity, Strap, HorsePiece)> = world
+                    .query::<(Entity, &Strap, &HorsePiece)>()
+                    .iter(world)
+                    .map(|(e, s, p)| (e, *s, *p))
+                    .collect();
+                let world = &*world;
+                let at = |(e, p): (Entity, Vec3)| {
+                    world
+                        .get::<GlobalTransform>(e)
+                        .map(|g| g.transform_point(p))
+                };
+                let to_torso = |p: Vec3| {
+                    world
+                        .get::<GlobalTransform>(tack.torso)
+                        .map(|g| g.affine().inverse().transform_point3(p))
+                };
+                // El punto de la cruz: el extremo de la rienda del lado de la
+                // cabeza en su último tramo.
+                // Un frame sin alguno de los dos puntos (la escena recién
+                // armada) no se mide: medir desde el origen fingiría la deriva.
+                let rest = |rein: Entity| {
+                    world
+                        .get::<Strap>(rein)
+                        .and_then(|strap| at(strap.ends[0]))
+                        .and_then(to_torso)
+                };
+                let (Some(left), Some(right)) = (rest(tack.reins[0]), rest(tack.reins[1])) else {
+                    continue;
+                };
+                let rests = [left, right];
+                let first = *start.get_or_insert(rests);
+                for s in 0..2 {
+                    drift = drift.max(rests[s].distance(first[s]));
+                }
+                // Cada tramo entre la quijada y la cruz, sobre el cuello.
+                for (e, strap, piece) in &straps {
+                    let ends = [strap.ends[0].0, strap.ends[1].0];
+                    if *piece != HorsePiece::Rein
+                        || tack.reins.contains(e)
+                        || ends.iter().all(|e| *e == tack.head)
+                    {
+                        continue;
+                    }
+                    let (Some(a), Some(b)) = (at(strap.ends[0]), at(strap.ends[1])) else {
+                        continue;
+                    };
+                    for p in strap_curve(a, b, strap.sag, SAG_PARTS) {
+                        off = off.max(near.signed_distance(p).unwrap_or(f32::MAX));
+                    }
+                }
+            }
+            println!(
+                "{idle:?}: the reins stand {off:.3} m off the neck at most, their rest on the withers moves {drift:.3} m"
+            );
+            assert!(off < REIN_OFF_NECK, "{idle:?}: {off}");
+            assert!(drift < WITHERS_REST_DRIFT, "{idle:?}: {drift}");
         }
     }
 
@@ -3897,10 +4179,11 @@ pub(crate) mod tests {
     /// espesor (3–5 mm), sobre una cabeza curva.
     const STRAP_GAP: f32 = 0.008;
 
-    /// Las dos tiras que la cabeza baja (`Idle_Headlow`) aparta un poco más:
-    /// la testera en un costado de la nuca (medido 9.8 mm) y el fiador bajo
-    /// la garganta (8.7 mm), donde la piel se pliega sobre ellas.
-    const HEAD_DOWN: [(&str, f32); 2] = [("Testera", 0.01), ("Fiador", 0.009)];
+    /// Las dos tiras que los clips apartan un poco más: la testera en un
+    /// costado de la nuca (medido 8.5 mm) y el fiador bajo la garganta (11.5
+    /// mm: `tools/recado.py` lo aparta a lo sumo 6 mm de donde la garganta se
+    /// pliega sobre él al bajar la cabeza y al saltar).
+    const HEAD_DOWN: [(&str, f32); 2] = [("Testera", 0.01), ("Fiador", 0.012)];
 
     #[test]
     fn the_bit_crosses_the_mouth_at_the_lip_corners_and_its_shanks_lie_on_the_lips() {

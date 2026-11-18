@@ -107,5 +107,24 @@ class Maps(unittest.TestCase):
         self.assertGreater(np.ptp(ends), 256 * 0.15, "locks of different lengths")
 
 
+
+@unittest.skipIf(np is None, "needs numpy")
+class Horse(unittest.TestCase):
+    def test_the_horse_the_recado_is_modelled_on_stands_on_its_hooves_at_its_game_height(self):
+        horse = R.Glb(R.HORSE)
+        stand = horse.worlds(R.REST_CLIP, 0.0)
+        skin = R.to_body(horse.skinned(stand, ("Horse", "Horseshoe")))
+        self.assertLess(abs(skin[:, 1].min()), 0.02, "on the ground")
+        # At the game's size: the skin over the withers bone 1.63 m up (1.74
+        # in the file).
+        withers = R.to_body(horse.joint_world("BN_Spine_03_05_05", stand)[:3, 3])
+        top = skin[(np.abs(skin[:, 0] - withers[0]) < 0.04) & (np.abs(skin[:, 2]) < 0.05), 1].max()
+        self.assertTrue(1.58 < top < 1.68, top)
+        # Its head up: the glTF's own rest has it down by the hooves.
+        head = lambda w: R.to_body(horse.joint_world("BN_Head_00_016_015", w)[:3, 3])[1]
+        self.assertGreater(head(stand), 1.6)
+        self.assertLess(head(horse.worlds()), 0.8)
+
+
 if __name__ == "__main__":
     unittest.main()
