@@ -759,9 +759,6 @@ pub struct RiderMotion {
     /// Qué tan plegado hacia adelante está sobre un salto (`0..1`), acercándose
     /// suavemente.
     pub fold: Spring,
-    /// Whether both hands hold the reins (the half-seat), the right rein in the
-    /// right hand.
-    pub two_hands: bool,
     /// Si el caballo estaba en el aire en el frame anterior.
     pub flying: bool,
     /// Cuánto tiempo pasó desde que aterrizó el caballo, en segundos (nada una
@@ -1260,14 +1257,14 @@ pub(super) fn pose_riders(
             right + release * (2.0 * half - 1.0).max(0.0),
         ];
         // The right rein in the right hand once both hands are on the reins.
-        if let (Ok(tack), true) = (tacks.get(riding.horse), m.two_hands != (half > 0.5)) {
-            m.two_hands = half > 0.5;
-            if let Ok(mut rein) = straps.get_mut(tack.reins[1]) {
-                rein.ends[1] = if m.two_hands {
-                    (seated.bone(Bone::Hand(1)), PALM)
-                } else {
-                    (seated.bone(Bone::Hand(0)), PALM + Vec3::X * 0.012)
-                };
+        // Checked every frame (written only when it differs), so a missed
+        // frame or a scene created again never leaves it in the wrong hand.
+        if let Ok(tack) = tacks.get(riding.horse)
+            && let Ok(mut rein) = straps.get_mut(tack.reins[1])
+        {
+            let end = rein_end(seated, 1, half > 0.5);
+            if rein.ends[1] != end {
+                rein.ends[1] = end;
             }
         }
         // Los hombros acompañan al torso, con retraso: hacia arriba cuando la
@@ -1324,6 +1321,18 @@ pub(super) fn pose_riders(
                 t.rotation = t.rotation.slerp(*rest, open);
             }
         }
+    }
+}
+
+/// Where rein `s` (0 the left) ends on the rider: both in the left hand, a
+/// finger's width apart, or, with both hands on the reins (the half-seat),
+/// each in its own hand.
+pub fn rein_end(seated: &Seated, s: usize, two_hands: bool) -> (Entity, Vec3) {
+    if two_hands && s == 1 {
+        (seated.bone(Bone::Hand(1)), PALM)
+    } else {
+        let apart = Vec3::X * (if s == 0 { -0.012 } else { 0.012 });
+        (seated.bone(Bone::Hand(0)), PALM + apart)
     }
 }
 
@@ -1448,8 +1457,7 @@ pub(super) fn seat_riders(
             // Ambas riendas en la mano izquierda, separadas el ancho de un
             // dedo.
             if let Ok(mut rein) = straps.get_mut(tack.reins[s]) {
-                let apart = Vec3::X * (if s == 0 { -0.012 } else { 0.012 });
-                rein.ends[1] = (seated.bone(Bone::Hand(0)), PALM + apart);
+                rein.ends[1] = rein_end(seated, s, false);
             }
             commands.entity(tack.stirrups[s]).try_insert(OnFoot {
                 rider,
@@ -2259,7 +2267,7 @@ pub(crate) mod tests {
     /// The rider model on `carrier`, once its scene (maybe being created again
     /// in parallel runs) has its bones: riding on at `speed` until then.
     fn posed_model(app: &mut App, me: Entity, carrier: Entity, speed: f32) -> Entity {
-        loop {
+        for _ in 0..600 {
             let world = app.world();
             if let Some(m) = try_named(world, carrier, "Rider model")
                 .filter(|m| try_named(world, *m, "hand_l").is_some())
@@ -2268,6 +2276,7 @@ pub(crate) mod tests {
             }
             ride(app, me, speed);
         }
+        panic!("no rider model with a hand_l after 600 frames");
     }
 
     /// How far the bone lines of the rein arm (the left) and of the free arm
@@ -2490,6 +2499,15 @@ pub(crate) mod tests {
         // Leaning into the gallop the head is held level, bending the neck a
         // little more than sitting.
         assert!(head < 0.05, "the head {head} m off its rest");
+        // Back to the walk, both reins in the left hand again, where they
+        // were seated.
+        for _ in 0..160 {
+            ride(&mut app, me, 1.5);
+        }
+        for s in 0..2 {
+            let rein = app.world().get::<Strap>(tack.reins[s]).unwrap();
+            assert_eq!(rein.ends[1], rein_end(&seated, s, false), "walk: rein {s}");
+        }
     }
 
     #[test]
@@ -2608,6 +2626,7 @@ pub(crate) mod tests {
                 ride(app, me, speed);
             }
             let (mut free, mut reins, mut wrist) = (0.0f32, f32::MAX, 0.0f32);
+            let mut seen = 0;
             for _ in 0..40 {
                 ride(app, me, speed);
                 let world = app.world();
@@ -2627,7 +2646,9 @@ pub(crate) mod tests {
                 free = free.max(turn(right).angle_between(Quat::IDENTITY));
                 reins = reins.min(turn(left).angle_between(Quat::IDENTITY));
                 wrist = wrist.max(turn(hand).angle_between(seated.loose.0));
+                seen += 1;
             }
+            assert!(seen > 20, "{speed} m/s: only {seen} of 40 frames measured");
             println!(
                 "{speed} m/s: free finger {:.0}°, reins finger {:.0}°, free wrist {:.0}° off rest",
                 free.to_degrees(),
