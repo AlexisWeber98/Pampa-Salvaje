@@ -52,7 +52,8 @@ SEAT = (0.0, 2.32, 1.40)
 SINGLETREE_Y = 1.24
 # Where along the shafts (Blender Y) the breeching straps are buckled round
 # them: a little behind the breeching's ends (``H.BREECH``); the game's
-# ``vehicle::models::SULKY_BREECH_TIE`` is ``shaft_at(1, BREECH_TIE)``.
+# ``vehicle::models::SULKY_BREECH_TIE`` is ``shaft_at(1, BREECH_TIE)`` (checked
+# by ``test_vehicle.py``).
 BREECH_TIE = H.BREECH[1] + 0.06
 
 

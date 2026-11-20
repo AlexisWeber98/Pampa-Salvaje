@@ -496,31 +496,40 @@ fn a_draught_horses_reins_stay_on_its_bit_as_it_turns_its_head_walks_and_gallops
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert!(ready, "the sulky and its horse's harness never came");
-    // The nearest rein vertex (on the sulky or on the harness) to the middle
-    // of the bit, whose rings are 5.5 cm to either side of it.
+    // Each end of the bit (its vertices on either side of its middle, across
+    // the mouth) to the nearest vertex of the reins: the farther of the two,
+    // so both reins must reach their ring.
     let off_the_bit = |app: &mut App| -> Option<f32> {
         let bit = named(app, "Harness Bit")?;
-        let reins = named(app, "Harness Reins");
-        let model = {
-            let world = app.world_mut();
-            world
-                .query_filtered::<Entity, With<VehicleModel>>()
-                .iter(world)
-                .next()?
-        };
+        let reins = named(app, "Harness Reins")?;
         let all = cpu::drawn(app.world_mut(), Some(me));
-        let under_model = cpu::drawn(app.world_mut(), Some(model));
         let bit = all.iter().find(|d| d.entity == bit)?;
+        let reins = all.iter().find(|d| d.entity == reins)?;
         let mid = bit.positions.iter().sum::<Vec3>() / bit.positions.len() as f32;
-        let rein_points = under_model
+        // Across the mouth: from the middle to the bit's farthest vertex.
+        let far = bit
+            .positions
             .iter()
-            .chain(all.iter().filter(|d| Some(d.entity) == reins))
-            .flat_map(|d| d.positions.iter());
-        Some(
-            rein_points
-                .map(|p| p.distance(mid))
-                .fold(f32::MAX, f32::min),
-        )
+            .copied()
+            .max_by(|a, b| a.distance(mid).total_cmp(&b.distance(mid)))?;
+        let across = (far - mid).normalize_or_zero();
+        let end = |sign: f32| {
+            let half: Vec<Vec3> = bit
+                .positions
+                .iter()
+                .copied()
+                .filter(|p| (*p - mid).dot(across) * sign > 0.0)
+                .collect();
+            half.iter().sum::<Vec3>() / half.len().max(1) as f32
+        };
+        let nearest = |at: Vec3| {
+            reins
+                .positions
+                .iter()
+                .map(|p| p.distance(at))
+                .fold(f32::MAX, f32::min)
+        };
+        Some(nearest(end(1.0)).max(nearest(end(-1.0))))
     };
     let mut worst: (f32, String) = (0.0, String::new());
     let mut measured = 0;
@@ -551,13 +560,13 @@ fn a_draught_horses_reins_stay_on_its_bit_as_it_turns_its_head_walks_and_gallops
         }
     }
     println!(
-        "the reins at most {:.3} m from the bit's middle ({})",
+        "the farther rein at most {:.3} m from its end of the bit ({})",
         worst.0, worst.1
     );
     assert!(measured > 40, "only {measured} frames measured");
     assert!(
-        worst.0 < 0.09,
-        "{}: the reins end {} m from the bit",
+        worst.0 < 0.02,
+        "{}: a rein ends {} m from its end of the bit",
         worst.1,
         worst.0
     );
@@ -648,31 +657,27 @@ fn vehicle_points(app: &mut App, me: Entity, driver: Option<Entity>) -> Vec<(Vec
         .collect()
 }
 
-/// How many meshes drawn for the vehicle `me` (not its horses nor its
-/// driver) reach within `reach` of `point`: by a vertex, or by the axis of a
-/// strap (a rein's stretch is a unit strap with a ring of vertices at each
-/// end, its line overlapping the hand).
-fn reaching(app: &mut App, me: Entity, driver: Entity, point: Vec3, reach: f32) -> usize {
+/// How many of the driver reins of the vehicle `me` reach within `reach` of
+/// `point`, each rein counted once: by a vertex of one of its parts, or by
+/// the part's axis (a part is a unit strap with a ring of vertices at each
+/// end, its line overlapping the hand). Only the reins count, never the
+/// vehicle's own model (review R3, L55).
+fn reaching(app: &mut App, me: Entity, point: Vec3, reach: f32) -> usize {
     use crate::character::cpu;
-    let horses: Vec<Entity> = {
-        let world = app.world_mut();
-        world
-            .query_filtered::<Entity, With<VehicleHorse>>()
-            .iter(world)
-            .collect()
+    let world = app.world_mut();
+    let rein_of = |world: &World, e: Entity| {
+        let parent = world.get::<ChildOf>(e)?.parent();
+        let rein = world.get::<models::DriverRein>(parent)?;
+        Some((rein.horse, rein.side))
     };
-    let mut not_mine = std::collections::HashSet::new();
-    for e in horses.into_iter().chain([driver]) {
-        not_mine.extend(
-            cpu::drawn(app.world_mut(), Some(e))
-                .into_iter()
-                .map(|d| d.entity),
-        );
-    }
-    cpu::drawn(app.world_mut(), Some(me))
+    let parts: Vec<_> = cpu::drawn(world, Some(me))
         .into_iter()
-        .filter(|d| !not_mine.contains(&d.entity) && !d.positions.is_empty())
-        .filter(|d| {
+        .filter(|d| !d.positions.is_empty())
+        .filter_map(|d| rein_of(world, d.entity).map(|r| (r, d)))
+        .collect();
+    parts
+        .into_iter()
+        .filter(|(_, d)| {
             let by_vertex = d.positions.iter().any(|p| p.distance(point) < reach);
             let half = d.positions.len() / 2;
             let centre = |v: &[Vec3]| v.iter().sum::<Vec3>() / v.len().max(1) as f32;
@@ -681,7 +686,9 @@ fn reaching(app: &mut App, me: Entity, driver: Entity, point: Vec3, reach: f32) 
             let t = ((point - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
             by_vertex || (a + ab * t).distance(point) < reach
         })
-        .count()
+        .map(|(rein, _)| rein)
+        .collect::<std::collections::HashSet<_>>()
+        .len()
 }
 
 #[test]
@@ -717,7 +724,7 @@ fn the_drivers_reins_end_in_his_left_hand_on_the_sulky_and_the_carreton() {
                     .get::<GlobalTransform>(hand)
                     .unwrap()
                     .transform_point(PALM);
-                let n = reaching(&mut app, me, driver, palm, 0.02);
+                let n = reaching(&mut app, me, palm, 0.02);
                 measured += 1;
                 if n < fewest.0 {
                     fewest = (
@@ -737,6 +744,122 @@ fn the_drivers_reins_end_in_his_left_hand_on_the_sulky_and_the_carreton() {
             "{}: {} of {want} reins in the hand",
             fewest.1,
             fewest.0
+        );
+    }
+}
+
+#[test]
+fn a_respawned_horse_and_driver_keep_the_reins_and_the_breeching_on_their_new_joints() {
+    // Review R3 (L55): `rein_drivers` and `strap_breeching` move a strap's
+    // end to the new joint when a horse's or the driver's scene is created
+    // again. After both scenes of a sulky spawn again, each rein ends in the
+    // driver's new left hand and starts on a new joint of its own horse, each
+    // breeching strap starts on the horse's new `BREECH_JOINT`, and no strap
+    // is drawn twice.
+    use crate::character::horse::tests::try_named;
+    use crate::character::tack::Strap;
+    use bevy::world_serialization::WorldAssetRoot;
+    use models::{BREECH_JOINT, BreechingStrap, DriverRein};
+    let (mut app, me, driver) = vehicle_ready(VehicleVisual::seeded(Vehicle::Sulky, 0, 7));
+    let driver = driver.unwrap();
+    let world = app.world_mut();
+    let horses: Vec<Entity> = world
+        .query_filtered::<Entity, With<VehicleHorse>>()
+        .iter(world)
+        .collect();
+    let old: std::collections::HashSet<Entity> = world
+        .query::<&Strap>()
+        .iter(world)
+        .map(|s| s.ends[0].0)
+        .collect();
+    let old_hand = try_named(world, driver, "hand_l").unwrap();
+    // Their scenes created again: new joints.
+    let mut roots = Vec::new();
+    let mut stack: Vec<Entity> = horses.iter().copied().chain([driver]).collect();
+    while let Some(e) = stack.pop() {
+        if world.get::<WorldAssetRoot>(e).is_some() {
+            roots.push(e);
+        }
+        stack.extend(world.get::<Children>(e).into_iter().flatten().copied());
+    }
+    assert!(roots.len() > horses.len(), "{} scene roots", roots.len());
+    for e in roots {
+        world.get_mut::<WorldAssetRoot>(e).unwrap().set_changed();
+    }
+    let mut hand = None;
+    for _ in 0..200 {
+        app.update();
+        hand = try_named(app.world(), driver, "hand_l").filter(|&h| h != old_hand);
+        let world = app.world_mut();
+        let settled = world
+            .query::<&Strap>()
+            .iter(world)
+            .all(|s| !old.contains(&s.ends[0].0));
+        if hand.is_some() && settled {
+            break;
+        }
+    }
+    let hand = hand.expect("the driver's scene spawned again");
+    // A few frames of a walk on the new joints.
+    app.world_mut().entity_mut(me).insert(VisualPose {
+        animation: AnimationState::Walk,
+        speed: 1.2,
+        ..default()
+    });
+    for _ in 0..10 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let under = |world: &World, horse: Entity, e: Entity| {
+        std::iter::successors(Some(e), |&e| world.get::<ChildOf>(e).map(|c| c.parent()))
+            .any(|a| a == horse)
+    };
+    let reins: Vec<(DriverRein, Strap)> = world
+        .query::<(&DriverRein, &Strap)>()
+        .iter(world)
+        .map(|(r, s)| (*r, *s))
+        .collect();
+    assert_eq!(reins.len(), 2, "one rein per side of the one horse");
+    for (rein, strap) in &reins {
+        assert_eq!(
+            strap.ends[1].0, hand,
+            "side {}: rein in the new hand",
+            rein.side
+        );
+        let terret = strap.ends[0].0;
+        assert!(
+            !old.contains(&terret),
+            "side {}: rein on a stale joint",
+            rein.side
+        );
+        assert!(world.get::<GlobalTransform>(terret).is_some());
+        assert!(
+            under(world, rein.horse, terret),
+            "side {}: rein off its horse",
+            rein.side
+        );
+    }
+    let breeching: Vec<(BreechingStrap, Strap)> = world
+        .query::<(&BreechingStrap, &Strap)>()
+        .iter(world)
+        .map(|(b, s)| (*b, *s))
+        .collect();
+    assert_eq!(breeching.len(), 2, "one breeching strap per side");
+    for (tie, strap) in &breeching {
+        let joint = strap.ends[0].0;
+        assert!(
+            !old.contains(&joint),
+            "side {}: breeching on a stale joint",
+            tie.side
+        );
+        assert_eq!(
+            world.get::<Name>(joint).map(|n| n.as_str()),
+            Some(BREECH_JOINT)
+        );
+        assert!(
+            under(world, tie.horse, joint),
+            "side {}: breeching off its horse",
+            tie.side
         );
     }
 }

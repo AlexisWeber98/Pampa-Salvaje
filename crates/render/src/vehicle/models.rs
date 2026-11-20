@@ -849,7 +849,8 @@ pub const BREECH_JOINT: &str = "BN_Spine_00_02_02";
 
 /// Where the sulky's left breeching strap is buckled round its left shaft, in
 /// the body's space (`tools/sulky.py` `shaft_at(1, BREECH_TIE)`; Blender
-/// (x, y, z) is here (-y, z, -x)); the right mirrors Z.
+/// (x, y, z) is here (-y, z, -x); `tools/test_vehicle.py` checks it); the right
+/// mirrors Z.
 pub const SULKY_BREECH_TIE: Vec3 = Vec3::new(-0.40, 1.046, -0.354);
 
 /// A breeching strap's width and its thickness over that width

@@ -5,6 +5,8 @@ carretón, Ford T): their geometry and maps, without Blender.
 """
 
 import math
+import os
+import re
 import unittest
 
 try:
@@ -54,6 +56,18 @@ class Vehicles(unittest.TestCase):
                 self.assertAlmostEqual(hub[2], radius, places=4, msg=(name, wheel))
                 reach = max(math.hypot(p[1], p[2]) for p in mesh.verts)
                 self.assertLess(abs(reach - radius), 0.012, (name, wheel, reach))
+
+    def test_the_sulky_breeching_tie_the_game_reads_is_on_the_left_shaft(self):
+        # The game draws each breeching strap to ``SULKY_BREECH_TIE``, where
+        # ``sulky.py`` buckles its band round the shaft.
+        rs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                          "crates", "render", "src", "vehicle", "models.rs")
+        with open(rs, encoding="utf-8") as f:
+            m = re.search(r"SULKY_BREECH_TIE: Vec3 = Vec3::new\(([^)]*)\)", f.read())
+        self.assertIsNotNone(m, "SULKY_BREECH_TIE not found in models.rs")
+        game = [float(x) for x in m.group(1).split(",")]
+        tie = body_space(sulky.shaft_at(1, sulky.BREECH_TIE))
+        self.assertTrue(all(abs(x - y) < 2e-3 for x, y in zip(tie, game)), (tie, game))
 
     def test_every_face_uses_a_known_material(self):
         for name, (script, _, _, _) in GAME.items():
