@@ -1544,6 +1544,40 @@ mod tests {
     }
 
     #[test]
+    fn each_parked_sulky_is_spawned_with_its_turn_of_model() {
+        let city = TownLayout::generate(&pampa_core::TownConfig {
+            name: pampa_core::TownConfig::TOWN_HALL_TOWN.into(),
+            blocks: (8, 8),
+            ..pampa_core::TownConfig::castex()
+        })
+        .unwrap();
+        let mut app = app_with(vec![city.clone()], 0);
+        // Todos sulkies y con la misma semilla: sin el turno, todos sacarían
+        // el mismo modelo de la semilla.
+        let sulkies: Vec<Parked> = pampa_core::parked_in(&city)
+            .into_iter()
+            .map(|p| Parked {
+                vehicle: Vehicle::Sulky,
+                seed: 0,
+                ..p
+            })
+            .collect();
+        assert!(sulkies.len() >= 2, "{sulkies:?}");
+        app.insert_resource(ParkedVehicles(vec![sulkies]));
+        app.update();
+        let wanted = app.world().resource::<ParkedVehicles>().variants(0);
+        let mut query = app.world_mut().query::<(&ParkedVehicle, &VehicleVisual)>();
+        let mut found: Vec<_> = query
+            .iter(app.world())
+            .map(|(p, v)| (p.index, v.variant))
+            .collect();
+        found.sort_by_key(|(index, _)| *index);
+        let found: Vec<_> = found.into_iter().map(|(_, variant)| variant).collect();
+        assert_eq!(found, wanted);
+        assert!(found.contains(&Variant::Own) && found.contains(&Variant::Gig));
+    }
+
+    #[test]
     fn horsemen_ride_with_their_town_and_leave_with_it() {
         let city = TownLayout::generate(&pampa_core::TownConfig {
             name: "Ciudad".into(),
