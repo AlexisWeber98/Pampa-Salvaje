@@ -1,6 +1,6 @@
 # Caballo de henrysteve973
 
-El "Horse" de henrysteve973 (Sketchfab, CC BY 4.0; ver `CREDITS.md`), convertido para el juego por `tools/henry_horse.py` (ver `tools/README.md`). Es el caballo del juego (`Species::Horse` en `crates/render/src/fauna/livestock.rs`: los de corral, los ensillados y los de tiro); reemplaza a `../own/horse.glb` (`tools/horse.py`), que el juego ya no carga. El recado y la brida (`tools/recado.py`), el jinete y los arreos de tiro del sulky y el carretón (`tools/vehicle_harness.py`) están ajustados a este caballo parado como al empezar `Idle_1` (H5–H7 de `odd/tasks/henry-horse.md`).
+El "Horse" de henrysteve973 (Sketchfab, CC BY 4.0; ver `CREDITS.md`), convertido para el juego por `tools/henry_horse.py` (ver `tools/README.md`). Es el caballo del juego (`Species::Horse` en `crates/render/src/fauna/livestock.rs`: los de corral, los ensillados y los de tiro); reemplaza al caballo propio de `tools/horse.py` (su `own/horse.glb` se borró el 2026-11-20). El recado y la brida (`tools/recado.py`), el jinete y los arreos de tiro del sulky y el carretón (`tools/vehicle_harness.py`) están ajustados a este caballo parado como al empezar `Idle_1` (H5–H7 de `odd/tasks/henry-horse.md`).
 
 | Archivo | Contenido |
 |---|---|

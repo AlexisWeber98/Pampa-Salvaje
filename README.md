@@ -608,8 +608,8 @@ acentos (un pañuelo rojo, una faja, botones de bronce).
   oscuro con botones de bronce, un cinturón de cuero, pantalones oscuros y
   botas.
 
-Los caballos ensillados son el caballo criollo propio, modelado en Blender
-(`tools/horse.py`, `assets/models/fauna/own/horse.glb`, 11.944 triángulos), el
+Los caballos ensillados son el "Horse" de henrysteve973 (Sketchfab, CC BY 4.0,
+`assets/models/fauna/henry/horse.glb`, ver `CREDITS.md`), el
 modelo de los caballos de corral, de 1.5 m a la cruz, con un recado y una
 cabezada de 1919, atados o montados
 (`pampa_render::character::{horse, tack, gait, rider}`):

@@ -359,7 +359,7 @@ El GLB lleva dos materiales lisos, `Body` y `Feathers`; el juego les pone los ma
 
 ## `horse.py`: el caballo criollo modelado en Blender
 
-> Reemplazado en el juego por el caballo de henrysteve973 (`henry_horse.py`). `Coat::color_at`, que nombra esta sección, ya no existe en Rust: los pelajes se pintan ahora en `henry_coats.py` (`coat_rgb`).
+> Reemplazado en el juego por el caballo de henrysteve973 (`henry_horse.py`). `Coat::color_at`, que nombra esta sección, ya no existe en Rust: los pelajes se pintan ahora en `henry_coats.py` (`coat_rgb`). Su salida (`own/horse.glb`, `horse_body/`, `horse_hair/`) y la referencia `quaternius/horse.glb` se borraron del repositorio el 2026-11-20 (siguen en el historial de git); `fox.py` y `cattle.py` todavía usan el script.
 
 `horse.py` modela, arma, pinta y anima el caballo criollo por script en Blender (probado con Blender 5.2), con las mismas piezas de `animal_rig.py` que el ñandú y al piso de calidad de la v13. Fue el caballo del juego (los de corral y los ensillados) hasta el de henrysteve973, en `assets/models/fauna/own/` (la v20, aprobada por el usuario el 2026-10-30); reemplaza a `assets/models/fauna/quaternius/horse.glb`. Para volver a generarlo:
 
