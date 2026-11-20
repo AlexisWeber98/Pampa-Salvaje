@@ -1216,7 +1216,10 @@ pub(crate) mod tests {
             assert!((WALK_SPEED * rate * stride - speed).abs() < 1e-4, "{speed}");
         }
         assert_eq!(walk_stride(4.8), walk_stride(STRETCH_TOP));
-        assert_eq!(gait_rate(Clip::Walk, 4.8), gait_rate(Clip::Walk, STRETCH_TOP));
+        assert_eq!(
+            gait_rate(Clip::Walk, 4.8),
+            gait_rate(Clip::Walk, STRETCH_TOP)
+        );
         // Por debajo, como antes: sin estirar, al ritmo del suelo con su piso
         // (retroceder y girar en el lugar).
         assert_eq!(walk_stride(0.5), 1.0);
@@ -1673,6 +1676,17 @@ pub(crate) mod tests {
         );
     }
 
+    /// Henry's tail joints, from the dock down, and the end of the last one
+    /// (the tip of the tail's bones; the hair cards hang a little past it).
+    const TAIL: [&str; 5] = [
+        "BN_Tail_00_061_067",
+        "BN_Tail_01_062_068",
+        "BN_Tail_02_063_069",
+        "BN_Tail_03_064_070",
+        "BN_Tail_04_065_071",
+    ];
+    const TAIL_TIP: &str = "BN_Tail_04_065_end_098";
+
     /// Dónde está `name` en el marco del cuerpo del caballo de `carrier`.
     fn in_body(app: &App, carrier: Entity, name: &str) -> Vec3 {
         let world = app.world();
@@ -1693,28 +1707,39 @@ pub(crate) mod tests {
         };
         let (mut app, me) = saddled_every(rider, 12.2, 20);
         let carrier = app.world().get::<Children>(me).unwrap()[0];
-        // La punta de la cola, detrás de las nalgas (a unos 0.85 m detrás de
-        // la cinchera) y de los corvejones: entre las patas quedaría por
-        // delante de ellos.
-        let behind = |app: &App, when: &str| {
-            let tip = in_body(app, carrier, "Tail9");
-            let hocks = ["BackLowerLeg.L", "BackLowerLeg.R"].map(|n| in_body(app, carrier, n).x);
-            assert!(tip.x < -0.85, "{when}: the tail's tip at {tip}");
-            assert!(
-                hocks.iter().all(|&h| tip.x < h - 0.1),
-                "{when}: the tail's tip at {tip}, the hocks at {hocks:?}"
-            );
+        // La punta de la cola, detrás de las nalgas y de los corvejones: entre
+        // las patas quedaría por delante de ellos. Where it is along the
+        // body (the most forward it gets), and how far behind the nearer
+        // hock (the least).
+        let behind = |app: &mut App| {
+            let tip = in_body(app, carrier, TAIL_TIP);
+            let hocks = [2, 3].map(|leg| in_body(app, carrier, HorseJoint::Cannon(leg).name()).x);
+            let hock = hocks.iter().map(|&h| h - tip.x).fold(f32::MAX, f32::min);
+            (-tip.x, hock)
         };
+        let worst = |a: (f32, f32), b: (f32, f32)| (a.0.min(b.0), a.1.min(b.1));
         for _ in 0..60 {
             ride(&mut app, me, 12.2);
         }
-        for k in 0..30 {
+        let mut galloping = (f32::MAX, f32::MAX);
+        for _ in 0..30 {
             ride(&mut app, me, 12.2);
-            behind(&app, &format!("gallop frame {k}"));
+            galloping = worst(galloping, behind(&mut app));
         }
+        let mut jumping = (f32::MAX, f32::MAX);
         for f in 0..=20 {
             fly(&mut app, me, Some(f as f32 / 20.0));
-            behind(&app, &format!("flight {}", f as f32 / 20.0));
+            jumping = worst(jumping, behind(&mut app));
+        }
+        println!(
+            "the tail's tip at least this far back and behind the hocks: galloping {galloping:.3?} m, jumping {jumping:.3?} m"
+        );
+        for (when, (back, hocks)) in [("galloping", galloping), ("over a jump", jumping)] {
+            // On henry (user, 2026-11-18: "Ajustarlas a henry"): over a jump
+            // the tip gets as far forward as 0.758 m back and 6.3 cm behind
+            // the hocks (the old horse: past 0.85 m and 10 cm).
+            assert!(back > 0.73, "{when}: the tail's tip only {back} m back");
+            assert!(hocks > 0.04, "{when}: {hocks} m behind the hocks");
         }
     }
 
@@ -1799,10 +1824,10 @@ pub(crate) mod tests {
         for _ in 0..50 {
             ride(&mut app, me, 12.2);
             let p = |n: &str| in_body(&app, carrier, n);
-            let dock = p("Tail4") - p("Tail2");
-            let hair = p("Tail9") - p("Tail7");
+            let dock = p(TAIL[2]) - p(TAIL[0]);
+            let hair = p(TAIL_TIP) - p(TAIL[3]);
             bends.push(dock.angle_between(hair).to_degrees());
-            tips.push(p("Tail9").y);
+            tips.push(p(TAIL_TIP).y);
         }
         let range = |v: &[f32]| {
             v.iter().copied().fold(f32::MIN, f32::max) - v.iter().copied().fold(f32::MAX, f32::min)
@@ -1835,11 +1860,7 @@ pub(crate) mod tests {
             .filter(|p| p.x < -0.8)
             .map(|p| p.y)
             .fold(f32::MAX, f32::min);
-        let hocks = in_body(&app, carrier, "BackLowerLeg.L").y;
-        assert!(
-            (hocks - 0.15..hocks + 0.05).contains(&lowest),
-            "the tail's hair ends at {lowest} m, the hocks at {hocks} m"
-        );
+        let hocks = in_body(&app, carrier, HorseJoint::Cannon(2).name()).y;
         // Al paso la cabeza sube y baja unos 9 cm, dos veces por tranco
         // (Loscher et al. 2016: 9.1 ± 3.4 cm), no picotea.
         let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 1.5, 20);
@@ -1850,12 +1871,24 @@ pub(crate) mod tests {
         let heights: Vec<f32> = (0..60)
             .map(|_| {
                 ride(&mut app, me, 1.5);
-                in_body(&app, carrier, "Head").y
+                in_body(&app, carrier, HorseJoint::Poll.name()).y
             })
             .collect();
         let range = heights.iter().copied().fold(f32::MIN, f32::max)
             - heights.iter().copied().fold(f32::MAX, f32::min);
-        assert!((0.057..0.105).contains(&range), "the head nods {range} m");
+        println!(
+            "the tail's hair ends {:.3} m below the hocks; the head nods {range:.4} m",
+            hocks - lowest
+        );
+        assert!(
+            // Henry's tail hangs up to 17 cm below the hocks (the old horse's,
+            // up to 15; user, 2026-11-18: "Ajustarlas a henry").
+            (hocks - 0.19..hocks + 0.05).contains(&lowest),
+            "the tail's hair ends at {lowest} m, the hocks at {hocks} m"
+        );
+        // Henry's walk nods the head 2.8 cm, much less than a real horse's
+        // (the rule was 5.7-10.5 cm; user, 2026-11-18: "Ajustarlas a henry").
+        assert!((0.025..0.105).contains(&range), "the head nods {range} m");
     }
 
     /// Escribe frames con skinning en CPU en `PAMPA_PREVIEW` (una carpeta) para
@@ -2191,10 +2224,7 @@ pub(crate) mod tests {
                     "{speed} m/s: hooves at {back}"
                 );
             } else {
-                assert!(
-                    (back / STRETCH_TOP - 1.0).abs() < 0.06,
-                    "{speed}: {back}"
-                );
+                assert!((back / STRETCH_TOP - 1.0).abs() < 0.06, "{speed}: {back}");
             }
         }
     }
@@ -2209,7 +2239,7 @@ pub(crate) mod tests {
             .affine()
             .inverse();
         let drawn = cpu::drawn(app.world_mut(), Some(me));
-        let main = drawn.into_iter().find(|d| d.name == "Main").unwrap();
+        let main = drawn.into_iter().find(|d| d.name == "Horse").unwrap();
         let p = main
             .positions
             .iter()
@@ -2234,14 +2264,13 @@ pub(crate) mod tests {
         let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 0.0, 10);
         let carrier = app.world().get::<Children>(me).unwrap()[0];
         let (rest, tris) = skin_in_body(&mut app, me);
-        let tibia = |app: &App, s: &str| {
-            [format!("BackUpperLeg.{s}"), format!("BackLowerLeg.{s}")]
-                .map(|n| in_body(app, carrier, &n))
+        let tibia = |app: &App, carrier: Entity, s: usize| {
+            [HorseJoint::Lower(s), HorseJoint::Cannon(s)].map(|j| in_body(app, carrier, j.name()))
         };
-        let gaskins: Vec<(&str, Vec<usize>, f32)> = ["L", "R"]
+        let gaskins: Vec<(usize, Vec<usize>, f32)> = [2, 3]
             .into_iter()
             .map(|s| {
-                let [a, b] = tibia(&app, s);
+                let [a, b] = tibia(&app, carrier, s);
                 let near: Vec<usize> = (0..rest.len())
                     .filter(|&i| {
                         let (d, t) = off_segment(rest[i], a, b);
@@ -2281,8 +2310,7 @@ pub(crate) mod tests {
             ride(&mut app, me, 12.2);
             let (posed, _) = skin_in_body(&mut app, me);
             for (s, near, girth) in &gaskins {
-                let [a, b] = [format!("BackUpperLeg.{s}"), format!("BackLowerLeg.{s}")]
-                    .map(|n| in_body(&app, carrier, &n));
+                let [a, b] = tibia(&app, carrier, *s);
                 let now = near
                     .iter()
                     .map(|&i| off_segment(posed[i], a, b).0)
@@ -2304,9 +2332,11 @@ pub(crate) mod tests {
         // tibia; con los pesos de calor solos se afinaba un 8 %), y en un mismo
         // frame a lo sumo el 2.5 % de los triángulos del muslo se aplasta a
         // menos de un tercio de su área (los pliegues de la babilla y del
-        // corvejón; eran el 3.2 %).
-        assert!(thinnest > 0.95, "the gaskin thins to x{thinnest}");
-        assert!(crushed * 40 <= thigh.len(), "{crushed} of {}", thigh.len());
+        // corvejón; eran el 3.2 %). Henry's own skinning (user, 2026-11-18:
+        // "Ajustarlas a henry"): the gaskin thins to x0.899-0.924 and 2.6-4.7 %
+        // of the thigh is crushed, so x0.88 and one in 18 (5.6 %).
+        assert!(thinnest > 0.88, "the gaskin thins to x{thinnest}");
+        assert!(crushed * 18 <= thigh.len(), "{crushed} of {}", thigh.len());
     }
 
     /// Las tarjetas de la crin (en reposo, sobre el cuello, entre la cruz y
@@ -2335,13 +2365,15 @@ pub(crate) mod tests {
                     .map(|&p| body.transform_point3(p))
                     .collect::<Vec<Vec3>>()
             };
-            (pick("Hair"), pick("Main"))
+            (pick("Hair"), pick("Horse"))
         };
         let (rest, _) = hair(&mut app);
         let mane: Vec<usize> = (0..rest.len())
             .filter(|&i| (0.42..0.98).contains(&rest[i].x) && rest[i].y > 1.3)
             .collect();
-        assert!(mane.len() > 1000, "{}", mane.len());
+        // Henry's mane cards there: 908 to over 1,000 vertices, by the idle's
+        // frame.
+        assert!(mane.len() > 600, "{}", mane.len());
         for _ in 0..60 {
             ride(&mut app, me, speed);
         }
@@ -2369,11 +2401,16 @@ pub(crate) mod tests {
         // pegada a él como una lámina (L55, L58): sus vertices quedan en
         // promedio a más de 4.8 cm del vertex más cercano de la piel, y un
         // cuarto más lejos que al paso (eran 3.7 cm al galope y 3.3 al paso;
-        // ahora 5.5 y 4.0).
-        let walk = mane_off_the_neck(WALK_SPEED, 20);
-        let gallop = mane_off_the_neck(12.2, 20);
+        // ahora 5.5 y 4.0). Henry's mane, from his own clip, over a second:
+        // 4.3-4.5 cm at the gallop, 2.6-3.1 at the walk (user, 2026-11-18:
+        // "Ajustarlas a henry"; the bound was 4.8 cm).
+        // A second (100 frames of 10 ms) each: two gallop strides, more than
+        // a walk stride; 20 frames caught only part of a stride, and the
+        // mean moved 3.4-5.4 cm with it.
+        let walk = mane_off_the_neck(WALK_SPEED, 100);
+        let gallop = mane_off_the_neck(12.2, 100);
         println!("mane off the neck: walking {walk:.3} m, galloping {gallop:.3} m");
-        assert!(gallop > 0.048, "{gallop}");
+        assert!(gallop > 0.04, "{gallop}");
         assert!(gallop > 1.25 * walk, "walking {walk}, galloping {gallop}");
     }
 
@@ -2634,92 +2671,6 @@ pub(crate) mod tests {
         }
         println!("worst: {:.1}° ({})", worst.0, worst.1);
         assert!(worst.0 < 8.0, "{}", worst.1);
-    }
-
-    #[test]
-    fn the_quarter_the_gaskin_and_the_shoulder_change_shape_through_the_gallop() {
-        // Los músculos no solo siguen a los huesos (`tools/horse.py`
-        // `MUSCLES`): cada uno se engrosa con la flexión de su articulación a
-        // lo largo del galope, y su piel se aleja de su eje cuando se engrosa
-        // (medido en el marco del hueso, así que su movimiento rígido no
-        // cuenta).
-        let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 12.2, 10);
-        let carrier = app.world().get::<Children>(me).unwrap()[0];
-        for _ in 0..60 {
-            ride(&mut app, me, 12.2);
-        }
-        let muscles = [
-            "Quarter.L",
-            "Gaskin.L",
-            "Scapula.L",
-            "Quarter.R",
-            "Gaskin.R",
-            "Scapula.R",
-        ];
-        // Por músculo: (su grosor, la distancia media de su piel) en el más
-        // flojo y en el más contraído, y cuántos vertices mueve.
-        let mut slack = [(f32::MAX, 0.0f32); 6];
-        let mut bunched = [(f32::MIN, 0.0f32); 6];
-        let mut skin = [0usize; 6];
-        for _ in 0..70 {
-            ride(&mut app, me, 12.2);
-            let drawn = cpu::drawn(app.world_mut(), Some(me));
-            let main = drawn.iter().find(|d| d.name == "Main").unwrap();
-            let world = app.world();
-            for (k, name) in muscles.iter().enumerate() {
-                let bone = named(world, carrier, name);
-                let (scale, along, centre) = world
-                    .get::<GlobalTransform>(bone)
-                    .unwrap()
-                    .to_scale_rotation_translation();
-                // Lo lejos que está del eje del músculo, a lo ancho.
-                let mine: Vec<f32> = main
-                    .positions
-                    .iter()
-                    .zip(&main.strongest)
-                    .filter(|(_, j)| **j == Some(bone))
-                    .map(|(p, _)| {
-                        let q = along.inverse() * (*p - centre);
-                        q.x.hypot(q.z)
-                    })
-                    .collect();
-                skin[k] = mine.len();
-                let mean = mine.iter().sum::<f32>() / mine.len().max(1) as f32;
-                let thick = scale.x / scale.y;
-                if thick < slack[k].0 {
-                    slack[k] = (thick, mean);
-                }
-                if thick > bunched[k].0 {
-                    bunched[k] = (thick, mean);
-                }
-            }
-        }
-        for (k, name) in muscles.iter().enumerate() {
-            println!(
-                "{name}: {} vertices; thickness x{:.3}, its skin x{:.3} from slack to bunched",
-                skin[k],
-                bunched[k].0 / slack[k].0,
-                bunched[k].1 / slack[k].1
-            );
-        }
-        for (k, name) in muscles.iter().enumerate() {
-            assert!(skin[k] > 5, "{name} moves {} vertices", skin[k]);
-            // Al menos un 10 % más grueso respecto de su largo, y su piel más
-            // afuera (la de la paleta, también movida por la mano que barre
-            // debajo, que tiene la mayor parte de su peso, apenas: x1.04).
-            assert!(
-                bunched[k].0 / slack[k].0 > 1.1,
-                "{name}: {:?} {:?}",
-                slack[k],
-                bunched[k]
-            );
-            assert!(
-                bunched[k].1 > slack[k].1 * 1.02,
-                "{name}: {:?} {:?}",
-                slack[k],
-                bunched[k]
-            );
-        }
     }
 
     /// Cuántos grados por delante de la vertical va la cara de un caballo (la

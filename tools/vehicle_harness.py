@@ -13,7 +13,9 @@ gig harness the trade sold): a breast collar (pechera) with its neck
 strap, the harness pad (sillín) with its two terrets and the tugs that
 hold the shafts, the belly band (barriguera), the back strap and crupper,
 the breeching (retranca) with its hip strap, and the bridle with its
-blinkers (anteojeras), noseband, throatlatch and a snaffle bit. Every
+blinkers (anteojeras), noseband, throatlatch and a snaffle bit, and the
+drivers' reins from the bit's rings to the terrets (the vehicles carry
+them on from there to the hands). Every
 strap is fitted to the horse's skin (a ray cast onto the mesh, without its
 hair cards, eyes and ears, then lifted ``GAP`` off it) and swept as a flat
 strap; the pad and the blinkers are padded leather with iron fittings.
@@ -21,7 +23,8 @@ strap; the pad and the blinkers are padded leather with iron fittings.
 It is built like ``tools/recado.py``'s recado: on henry standing as in the
 first frame of ``Idle_1`` (``REST_CLIP``; the nodes' own rest has the head
 down by the hooves), in game metres (``SCALE`` times the file's). The
-straps (``Collar``, ``Bands``, ``BackStrap``, ``Breeching``, ``Bridle``) take
+straps (``Collar``, ``Bands``, ``BackStrap``, ``Breeching``, ``Bridle``) and
+the reins (``Reins``) take
 the weights of the skin under them (never the ears' nor the eyelids'), so
 they bend with the horse; the stiff pieces ride bones whole: the pad
 (``Saddle``) the two bones of the back under it, the ``Crupper`` the tail's
@@ -91,6 +94,28 @@ SIDE = (0.273, -0.10, 1.12)  # the barrel's flank, where a trace runs along
 BREECH = (0.277, 0.34, 1.20)  # the breeching's end, strapped to a shaft
 BIT = (0.055, -1.32, 1.41)  # a ring of the snaffle, at the mouth's corner
 TERRET = (0.095, -0.27, 1.53)  # a terret on the pad, the rein runs through
+REIN = (0.005, 0.022)  # a rein's thickness and width
+# How far out of ``SIDE`` a trace bows on its way back along the flank: at
+# 2.5 cm it went 2.3 cm into the barrel by the elbow as henry shifts his
+# weight in ``Idle_1`` (and its flat strap 4.7 cm); at 10 cm it clears it.
+TRACE_OUT = 0.10
+
+
+def rein_to_terret(sx, n=10):
+    """The stretch of a driver's rein from the bit's ring on side ``sx`` (1
+    the left, -1 the right) to the pad's terret, bowed out off the side of
+    the neck (its middle 3.7 cm or more off henry's standing skin; the old
+    curve, which sagged below the straight line, ran 3 cm inside the neck's
+    root): part of the harness (``Reins``), so it goes with the horse's head;
+    the vehicle runs the rein on from the terret to the driver's hands."""
+    bit = (BIT[0] * sx, BIT[1], BIT[2])
+    terret = (TERRET[0] * sx, TERRET[1], TERRET[2])
+    return V.bezier(bit, V.add(bit, (0.09 * sx, 0.3, 0.03)), V.add(terret, (0.09 * sx, -0.3, 0.1)), terret, n)
+
+
+def rein_strap(path):
+    """A rein (flat leather, ``REIN``) swept along ``path``."""
+    return V.sweep(path, V.rect(REIN[0], REIN[1], 0.0015), "Leather", (0.4, 0.05), up=(1, 0, 0))
 
 # Where the pad's rays start (the barrel's axis), how far round from the top
 # its terrets stand (radians), and the bones its tree rides.
@@ -299,6 +324,10 @@ if V.bpy is not None:
         pieces["Bridle"] = (straps, None)
         pieces["Blinkers"] = (stiff, {HEAD: 1.0})
         pieces["Bit"] = (snaffle, {HEAD: 1.0})
+        # The driver's reins from the bit's rings to the terrets: on the
+        # skin's weights like the straps (the neck's along it), so they follow
+        # the head through its clips; the vehicles run them on to the hands.
+        pieces["Reins"] = (V.merge(*[rein_strap(rein_to_terret(sx)) for sx in (1, -1)]), None)
         return pieces
 
     def bridle(fit):

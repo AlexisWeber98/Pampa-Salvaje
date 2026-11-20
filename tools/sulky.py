@@ -24,8 +24,11 @@ the trotting sulky). Its parts, at period sizes:
   mudguard over each wheel, an iron step on the left, and a whip in its
   socket on the dash;
 - the traces (tiros) from the horse's breast collar to the singletree and
-  the reins from its bit, over the pad's terrets, to the driver's hands
-  (static: the harness on the horse is ``tools/vehicle_harness.py``).
+  the breeching straps' ends buckled round the shafts; no reins and no
+  breeching straps: the harness on the horse (``tools/vehicle_harness.py``)
+  carries the reins from the bit to the terrets, and the game draws them on
+  from the terrets to the driver's left hand, and the breeching straps from
+  the quarters to the shafts.
 
 The origin is the ground under the horse's body (henry's origin, the
 horse the game draws), so the game moves the sulky by its horse; ``Animal.0`` marks it.
@@ -47,6 +50,10 @@ AXLE_Y = 2.30
 HUB_X = 0.75
 SEAT = (0.0, 2.32, 1.40)
 SINGLETREE_Y = 1.24
+# Where along the shafts (Blender Y) the breeching straps are buckled round
+# them: a little behind the breeching's ends (``H.BREECH``); the game's
+# ``vehicle::models::SULKY_BREECH_TIE`` is ``shaft_at(1, BREECH_TIE)``.
+BREECH_TIE = H.BREECH[1] + 0.06
 
 
 def shaft_path(sx):
@@ -73,6 +80,23 @@ def shaft_at(sx, y):
         if a[1] <= y <= b[1]:
             return V.lerp(a, b, (y - a[1]) / (b[1] - a[1]))
     raise ValueError(f"no shaft at y {y}")
+
+
+def breeching_wrap(sx):
+    """The end of breeching strap ``sx`` buckled round its shaft at
+    ``BREECH_TIE``: a 3 cm leather band round the shaft's 4.2 x 5.2 cm
+    section (the game draws the strap from there to the breeching)."""
+    import math
+
+    c = shaft_at(sx, BREECH_TIE)
+    hx, hz = 0.021 + 0.003, 0.026 + 0.003
+    loop = []
+    for k in range(24):
+        a = 2 * math.pi * k / 24
+        ca, sa = math.cos(a), math.sin(a)
+        # A rounded rectangle (a superellipse), hugging the shaft's corners.
+        loop.append((c[0] + hx * math.copysign(abs(ca) ** 0.5, ca), c[1], c[2] + hz * math.copysign(abs(sa) ** 0.5, sa)))
+    return V.sweep(loop, V.rect(0.005, 0.03, 0.0015), "Leather", (0.4, 0.05), up=(0, 1, 0), caps=False, closed=True)
 
 
 def build():
@@ -125,9 +149,11 @@ def build():
         m.extend(V.sweep(path, V.rect(0.042, 0.052, 0.008), red, (1.2, 0.2), scales=scales))
         tip = path[0]
         m.extend(V.rod([V.add(tip, (0, -0.02, 0.005)), V.add(tip, (0, 0.10, -0.01))], 0.019, iron, n=10))
-        # The shaft's loop (a tug stop) behind the tug, holding the pad.
-        stop = (path[6][0], path[6][1] + 0.18, path[6][2])
-        m.extend(V.beam(V.add(stop, (0, 0, -0.03)), V.add(stop, (0, 0, 0.03)), 0.06, 0.012, iron))
+        # The shaft's stop behind the tug, holding the pad: an iron plate on
+        # the shaft's outer side (one 6 cm wide round the shaft went 2 cm into
+        # the barrel as henry shifts his weight in ``Idle_1``).
+        stop = (path[6][0] + 0.012 * sx, path[6][1] + 0.18, path[6][2])
+        m.extend(V.beam(V.add(stop, (0, 0, -0.03)), V.add(stop, (0, 0, 0.03)), 0.035, 0.012, iron))
     m.extend(V.beam((-0.44, 1.30, 0.98), (0.44, 1.30, 0.98), 0.07, 0.06, red, up=(0, 1, 0)))
     m.extend(V.beam((-0.46, 2.76, 0.96), (0.46, 2.76, 0.96), 0.06, 0.05, red, up=(0, 1, 0)))
     for sx in (1.0, -1.0):
@@ -216,24 +242,21 @@ def build():
     # The step, on the left.
     m.extend(V.rod([(0.44, sy - 0.30, 0.97), (0.56, sy - 0.32, 0.62)], 0.012, iron))
     m.extend(V.beam((0.50, sy - 0.40, 0.62), (0.62, sy - 0.24, 0.62), 0.14, 0.012, iron, up=(0, 0, 1)))
-    # Traces from the breast collar to the singletree, the breeching straps
-    # to the shafts, and the reins from the bit to the driver's hands.
+    # Traces from the breast collar to the singletree, and the breeching
+    # straps' buckled ends round the shafts. The straps themselves, from the
+    # breeching's ends on the quarters to the shafts, and the reins from the
+    # terrets to the driver's left hand are drawn by the game, from the horse
+    # as it moves (``vehicle::models::strap_breeching``, ``rein_drivers``):
+    # fixed on the sulky, a breeching strap went 2.6 cm into the quarters at
+    # the gallop. From the bit to the terrets the reins are the harness's.
     for sx in (1.0, -1.0):
         a = (H.TRACE[0] * sx, H.TRACE[1], H.TRACE[2])
         b = (0.40 * sx, st - 0.04, 1.0)
         mid = V.lerp(a, b, 0.5)
-        side = (H.SIDE[0] * sx + 0.025 * sx, mid[1], mid[2] - 0.04)
+        side = ((H.SIDE[0] + H.TRACE_OUT) * sx, mid[1], mid[2] - 0.04)
         trace = V.bezier(a, V.lerp(a, side, 0.6), V.lerp(side, b, 0.4), b, 14)
         m.extend(V.sweep(trace, V.rect(0.035, 0.008, 0.002), leather, (0.4, 0.05), up=(1, 0, 0)))
-        hold = (H.BREECH[0] * sx, H.BREECH[1], H.BREECH[2])
-        on_shaft = shaft_at(sx, H.BREECH[1] + 0.06)
-        m.extend(V.sweep([hold, V.lerp(hold, on_shaft, 0.5), on_shaft], V.rect(0.03, 0.006, 0.002), leather, (0.4, 0.05), up=(0, 1, 0)))
-        bit = (H.BIT[0] * sx, H.BIT[1], H.BIT[2])
-        terret = (H.TERRET[0] * sx, H.TERRET[1], H.TERRET[2])
-        hand = (0.11 * sx, sy - 0.40, sz + 0.12)
-        rein = V.bezier(bit, V.add(bit, (0.03 * sx, 0.35, -0.12)), V.add(terret, (0.0, -0.4, -0.06)), terret, 10)
-        rein += V.bezier(terret, V.add(terret, (0, 0.6, -0.08)), V.add(hand, (0, -0.6, -0.15)), hand, 10)[1:]
-        m.extend(V.sweep(rein, V.rect(0.005, 0.022, 0.0015), leather, (0.4, 0.05), up=(1, 0, 0)))
+        m.extend(breeching_wrap(sx))
     v.markers["Seat"] = SEAT
     v.markers["Animal.0"] = (0.0, 0.0, 0.0)
     v.extras = {"animals": 1, "animal": "horse"}

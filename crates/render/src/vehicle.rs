@@ -150,6 +150,8 @@ impl Plugin for VehiclePlugin {
                     models::swap_in_models,
                     models::ox_graph,
                     models::dress_animals,
+                    models::rein_drivers,
+                    models::strap_breeching,
                 ),
             )
             .add_observer(models::dress_model)

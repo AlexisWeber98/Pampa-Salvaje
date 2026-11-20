@@ -25,13 +25,15 @@
 use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMaterialName, GltfMesh, GltfNode, GltfSkin};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use pampa_core::Vehicle;
 
-use super::{Rolled, VehicleHorse, VehicleWheel};
+use super::{Rolled, VehicleHorse, VehicleSeat, VehicleWheel};
 use crate::AssetRoot;
+use crate::character::rider::PALM;
+use crate::character::tack::{SAG_PARTS, Strap, StrapPart, strap_mesh};
 use crate::facade::materials::{load_map_with, repeating};
 use crate::fauna::livestock::CATTLE_WALK_SPEED;
 use crate::gltf::{self, ModelState};
@@ -151,6 +153,12 @@ pub struct OfVehicle(pub Entity);
 /// escena del animal, así que una escena creada de nuevo se viste otra vez.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Dressed;
+
+/// On a draught horse or an ox: the mesh node [`dress_animals`] last dressed
+/// (marked [`Dressed`]). While that node is still dressed the animal is not
+/// walked again; once its scene is created again (the node is gone) it is.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct DressedOn(pub Entity);
 
 /// El reproductor de un buey, una vez creada su escena.
 #[derive(Component, Debug, Clone, Copy)]
@@ -520,6 +528,7 @@ pub fn dress_animals(
     horses: Query<Entity, With<VehicleHorse>>,
     oxen: Query<(Entity, &VehicleOx)>,
     (children, parents, dressed): (Query<&Children>, Query<&ChildOf>, Query<(), With<Dressed>>),
+    worn: Query<&DressedOn>,
     skinned: Query<&SkinnedMesh>,
     names: Query<&Name>,
 ) {
@@ -540,6 +549,10 @@ pub fn dress_animals(
             .map(|(e, ox)| (e, if ox.left { models.yoke.as_ref() } else { None })),
     );
     for (animal, file) in animals {
+        // Already dressed and the same scene: nothing to walk.
+        if worn.get(animal).is_ok_and(|w| dressed.contains(w.0)) {
+            continue;
+        }
         let Some((primitive, skin)) = children
             .iter_descendants(animal)
             .find_map(|e| skinned.get(e).ok().map(|s| (e, s)))
@@ -550,10 +563,12 @@ pub fn dress_animals(
         // tarjetas de pelo) pueden ocultarse por separado.
         let body = parents.get(primitive).map_or(primitive, ChildOf::parent);
         if dressed.contains(body) {
+            commands.entity(animal).try_insert(DressedOn(body));
             continue;
         }
         let Some(file) = file else {
             commands.entity(body).try_insert(Dressed);
+            commands.entity(animal).try_insert(DressedOn(body));
             continue;
         };
         let (Some(file), Some(bind)) = (files.get(file), binds.get(&skin.inverse_bindposes)) else {
@@ -611,6 +626,330 @@ pub fn dress_animals(
             }
         }
         commands.entity(body).try_insert(Dressed);
+        commands.entity(animal).try_insert(DressedOn(body));
+    }
+}
+
+/// The left terret of the draught harness (`tools/vehicle_harness.py`
+/// `TERRET`, game metres in Blender's frame) in `harness.glb`'s own space:
+/// the file's metres (the game's over `SCALE`, 1.5/1.6), +Y up and the horse
+/// facing +Z, its left +X. The right one mirrors X.
+pub const TERRET: Vec3 = Vec3::new(0.095 / 0.9375, 1.53 / 0.9375, 0.27 / 0.9375);
+
+/// The joint that carries the terrets' rein ends: the first of the two bones
+/// of the back under the harness pad (which rides both, half and half).
+pub const TERRET_JOINT: &str = "BN_Spine_01_03_03";
+
+/// How much a driver's rein sags from the terret to the hand, as a share of
+/// its length: a little, so it runs over the croup (straight stretches,
+/// 2.4 m on the sulky, cleared it by 10 cm or more; at 0.05 the sulky's
+/// would sag into the quarters).
+pub const DRIVER_REIN_SAG: f32 = 0.01;
+
+/// A driver's rein: its width (a flat leather line, `vehicle_harness.REIN`)
+/// and its thickness over that width.
+pub const DRIVER_REIN: (f32, f32) = (0.02, 0.25);
+
+/// Where the reins end on a vehicle with nobody on the seat, in the seat's
+/// space (+X ahead, +Y up): where a seated driver's hands are (on the sulky,
+/// measured 0.24 m ahead of and 0.47 m over the seat).
+pub const IDLE_HANDS: Vec3 = Vec3::new(0.24, 0.47, 0.0);
+
+/// A rein from a draught horse's terret to the driver's left hand, which
+/// holds all the reins as a driver does (or, with nobody driving, over the
+/// seat): `side` 0 is the horse's left rein. The stretch from the bit to the
+/// terret is the harness's (`Harness Reins`), on the horse's head.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriverRein {
+    pub horse: Entity,
+    pub side: usize,
+}
+
+/// The point `at` of `horse`'s harness (in `harness.glb`'s space) on the
+/// horse's joint `joint`, once its harness is on: the joint and the point in
+/// its space (the harness's own inverse bind of `joint` takes it there).
+fn harness_point(
+    horse: Entity,
+    joint: &str,
+    at: Vec3,
+    children: &Query<&Children>,
+    pieces: &Query<(&Name, &SkinnedMesh)>,
+    names: &Query<&Name>,
+    binds: &Assets<SkinnedMeshInverseBindposes>,
+) -> Option<(Entity, Vec3)> {
+    let (_, skin) = children.iter_descendants(horse).find_map(|e| {
+        pieces
+            .get(e)
+            .ok()
+            .filter(|(n, _)| n.as_str() == "Harness Saddle")
+    })?;
+    let k = skin
+        .joints
+        .iter()
+        .position(|&j| names.get(j).is_ok_and(|n| n.as_str() == joint))?;
+    let bind = binds.get(&skin.inverse_bindposes)?.get(k)?;
+    Some((skin.joints[k], bind.transform_point3(at)))
+}
+
+/// `at` on the horse's left (`side` 0) or mirrored to its right.
+fn sided(at: Vec3, side: usize) -> Vec3 {
+    if side == 0 {
+        at
+    } else {
+        at * Vec3::new(-1.0, 1.0, 1.0)
+    }
+}
+
+/// The terret end of rein `side` of `horse`.
+fn terret_end(
+    horse: Entity,
+    side: usize,
+    children: &Query<&Children>,
+    pieces: &Query<(&Name, &SkinnedMesh)>,
+    names: &Query<&Name>,
+    binds: &Assets<SkinnedMeshInverseBindposes>,
+) -> Option<(Entity, Vec3)> {
+    harness_point(
+        horse,
+        TERRET_JOINT,
+        sided(TERRET, side),
+        children,
+        pieces,
+        names,
+        binds,
+    )
+}
+
+/// The hand end of rein `side` (of the vehicle with seat `seat`): the
+/// driver's left palm, the two reins of a horse a finger apart (like a
+/// rider's, [`rein_end`](crate::character::rider::rein_end)); with nobody
+/// driving, [`IDLE_HANDS`] over the seat.
+fn hand_end(
+    seat: Entity,
+    side: usize,
+    children: &Query<&Children>,
+    names: &Query<&Name>,
+) -> (Entity, Vec3) {
+    let apart = Vec3::X * if side == 0 { -0.012 } else { 0.012 };
+    children
+        .iter_descendants(seat)
+        .find(|&e| names.get(e).is_ok_and(|n| n.as_str() == "hand_l"))
+        .map_or((seat, IDLE_HANDS + Vec3::Z * apart.x), |hand| {
+            (hand, PALM + apart)
+        })
+}
+
+/// Gives each draught horse its two reins from its terrets to the driver's
+/// hands, once its harness is on, and keeps their ends on the current joints
+/// (a horse's or a driver's scene may be created again, and the driver comes
+/// after the vehicle). An end is looked for again only while it is missing
+/// or, for the hands, while nobody holds the reins.
+#[allow(clippy::too_many_arguments)]
+pub fn rein_drivers(
+    mut commands: Commands,
+    mats: Option<Res<VehicleMaterials>>,
+    binds: Option<Res<Assets<SkinnedMeshInverseBindposes>>>,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    horses: Query<(Entity, &ChildOf), With<VehicleHorse>>,
+    seats: Query<(Entity, &ChildOf), With<VehicleSeat>>,
+    (children, names, pieces): (Query<&Children>, Query<&Name>, Query<(&Name, &SkinnedMesh)>),
+    places: Query<(), With<GlobalTransform>>,
+    mut reins: Query<(Entity, &DriverRein, &mut Strap)>,
+    mut rein_mesh: Local<Option<Handle<Mesh>>>,
+) {
+    let (Some(mats), Some(binds), Some(meshes)) = (mats, binds, meshes.as_mut()) else {
+        return;
+    };
+    let Some(leather) = mats.by_name.get("Leather").cloned() else {
+        return;
+    };
+    let mut have: HashMap<(Entity, usize), Entity> = HashMap::default();
+    for (e, rein, _) in &reins {
+        have.insert((rein.horse, rein.side), e);
+    }
+    for (horse, body) in &horses {
+        let body = body.parent();
+        let Some(seat) = seats
+            .iter()
+            .find(|(_, p)| p.parent() == body)
+            .map(|(e, _)| e)
+        else {
+            continue;
+        };
+        for side in 0..2 {
+            if let Some(&e) = have.get(&(horse, side)) {
+                let Ok((_, _, mut strap)) = reins.get_mut(e) else {
+                    continue;
+                };
+                let [terret, hand] = strap.ends;
+                let terret = if places.contains(terret.0) {
+                    terret
+                } else {
+                    match terret_end(horse, side, &children, &pieces, &names, &binds) {
+                        Some(t) => t,
+                        None => continue,
+                    }
+                };
+                let hand = if places.contains(hand.0) && hand.0 != seat {
+                    hand
+                } else {
+                    hand_end(seat, side, &children, &names)
+                };
+                if strap.ends != [terret, hand] {
+                    strap.ends = [terret, hand];
+                }
+                continue;
+            }
+            let Some(terret) = terret_end(horse, side, &children, &pieces, &names, &binds) else {
+                continue;
+            };
+            let hand = hand_end(seat, side, &children, &names);
+            let mesh = rein_mesh
+                .get_or_insert_with(|| meshes.add(strap_mesh(6, DRIVER_REIN.1, (0.0, 0.5), 8.0)))
+                .clone();
+            commands
+                .spawn((
+                    Name::new("Driver rein"),
+                    DriverRein { horse, side },
+                    Strap {
+                        ends: [terret, hand],
+                        width: DRIVER_REIN.0,
+                        flat: false,
+                        sag: DRIVER_REIN_SAG,
+                    },
+                    Transform::default(),
+                    Visibility::default(),
+                    ChildOf(body),
+                ))
+                .with_children(|parts| {
+                    for k in 0..SAG_PARTS {
+                        parts.spawn((
+                            Name::new("Driver rein"),
+                            StrapPart { k, n: SAG_PARTS },
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(leather.clone()),
+                            Transform::default(),
+                        ));
+                    }
+                });
+        }
+    }
+}
+
+/// The left end of the draught harness's breeching (`tools/vehicle_harness.py`
+/// `BREECH`), in `harness.glb`'s space like [`TERRET`]; the right mirrors X.
+pub const BREECH: Vec3 = Vec3::new(0.277 / 0.9375, 1.20 / 0.9375, -0.34 / 0.9375);
+
+/// The joint that carries the breeching's ends: the skin there takes half its
+/// weight from this bone (the rest from the pelvis and the thigh), and a point
+/// on it keeps within a millimetre of its standing distance off the skin
+/// through `Idle_1`, `Walk` and `Gallop` (a point fixed on the sulky went
+/// 2.6 cm into the quarters at the gallop).
+pub const BREECH_JOINT: &str = "BN_Spine_00_02_02";
+
+/// Where the sulky's left breeching strap is buckled round its left shaft, in
+/// the body's space (`tools/sulky.py` `shaft_at(1, BREECH_TIE)`; Blender
+/// (x, y, z) is here (-y, z, -x)); the right mirrors Z.
+pub const SULKY_BREECH_TIE: Vec3 = Vec3::new(-0.40, 1.046, -0.354);
+
+/// A breeching strap's width and its thickness over that width
+/// (`tools/sulky.py`'s 3 cm by 6 mm).
+pub const BREECH_STRAP: (f32, f32) = (0.03, 0.2);
+
+/// A strap from the end of a draught horse's breeching (`side` 0 its left) to
+/// the vehicle's shaft, which holds the vehicle back going downhill: drawn
+/// here, from the horse's quarters, as they move under it.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BreechingStrap {
+    pub horse: Entity,
+    pub side: usize,
+}
+
+/// Straps each sulky horse's breeching to the shafts once its harness is on,
+/// and keeps the horse's end on its current joint (its scene may be created
+/// again). The carretón carries no breeching strap.
+#[allow(clippy::too_many_arguments)]
+pub fn strap_breeching(
+    mut commands: Commands,
+    mats: Option<Res<VehicleMaterials>>,
+    binds: Option<Res<Assets<SkinnedMeshInverseBindposes>>>,
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    vehicles: Query<(&super::VehicleVisual, &super::VehicleParts)>,
+    horses: Query<(Entity, &ChildOf), With<VehicleHorse>>,
+    (children, names, pieces): (Query<&Children>, Query<&Name>, Query<(&Name, &SkinnedMesh)>),
+    places: Query<(), With<GlobalTransform>>,
+    mut straps: Query<(&BreechingStrap, &mut Strap)>,
+    mut strap_mesh_handle: Local<Option<Handle<Mesh>>>,
+) {
+    let (Some(mats), Some(binds), Some(meshes)) = (mats, binds, meshes.as_mut()) else {
+        return;
+    };
+    let Some(leather) = mats.by_name.get("Leather").cloned() else {
+        return;
+    };
+    let mut have: HashSet<(Entity, usize)> = HashSet::default();
+    for (tie, mut strap) in &mut straps {
+        have.insert((tie.horse, tie.side));
+        if places.contains(strap.ends[0].0) {
+            continue;
+        }
+        let at = sided(BREECH, tie.side);
+        if let Some(end) = harness_point(
+            tie.horse,
+            BREECH_JOINT,
+            at,
+            &children,
+            &pieces,
+            &names,
+            &binds,
+        ) {
+            strap.ends[0] = end;
+        }
+    }
+    for (horse, body) in &horses {
+        let body = body.parent();
+        let on_sulky = vehicles
+            .iter()
+            .any(|(v, parts)| parts.body == body && v.vehicle == Vehicle::Sulky);
+        if !on_sulky {
+            continue;
+        }
+        for side in 0..2 {
+            if have.contains(&(horse, side)) {
+                continue;
+            }
+            let at = sided(BREECH, side);
+            let Some(end) =
+                harness_point(horse, BREECH_JOINT, at, &children, &pieces, &names, &binds)
+            else {
+                continue;
+            };
+            let tie = SULKY_BREECH_TIE
+                * if side == 0 {
+                    Vec3::ONE
+                } else {
+                    Vec3::new(1.0, 1.0, -1.0)
+                };
+            let mesh = strap_mesh_handle
+                .get_or_insert_with(|| meshes.add(strap_mesh(8, BREECH_STRAP.1, (0.0, 0.5), 2.0)))
+                .clone();
+            commands.spawn((
+                Name::new("Breeching strap"),
+                BreechingStrap { horse, side },
+                // Flat: its width along the body's +X (ahead), its face out.
+                Strap {
+                    ends: [end, (body, tie)],
+                    width: BREECH_STRAP.0,
+                    flat: true,
+                    sag: 0.0,
+                },
+                Mesh3d(mesh),
+                MeshMaterial3d(leather.clone()),
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(body),
+            ));
+        }
     }
 }
 

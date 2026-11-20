@@ -1687,7 +1687,8 @@ pub struct Tack {
     pub reins: [Entity; 2],
     /// Los estribos, primero el izquierdo y después el derecho.
     pub stirrups: [Entity; 2],
-    /// Los huesos `Torso` y `Head` del caballo.
+    /// Los huesos `Torso` y `Head` del caballo ([`HorseBone`]: en henry,
+    /// `BN_Spine_01` y la cabeza).
     pub torso: Entity,
     pub head: Entity,
     /// La parte superior del pellón (marco del cuerpo), y la ubicación de
