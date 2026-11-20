@@ -333,6 +333,10 @@ fn a_draught_horse_wears_its_harness_on_its_own_joints_through_its_clips() {
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    assert!(
+        !pieces.is_empty(),
+        "the sulky's horse never wore its harness (3000 frames): its model or harness.glb never loaded"
+    );
     let names: Vec<&str> = pieces.iter().map(|(_, n, _)| n.as_str()).collect();
     for piece in [
         "Collar",
