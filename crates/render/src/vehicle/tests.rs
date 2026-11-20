@@ -430,6 +430,28 @@ fn the_left_ox_wears_the_yoke_on_its_head_once() {
         let now = yoke(&mut app);
         assert!(now.len() <= 2, "dressed again: {now:?}");
     }
+    // Review R3-001 (L58): the oxen's scenes created again (new joints): the
+    // left one wears the yoke again, once, on its new `Head`.
+    let (_, oxen) = wait(&mut app);
+    let old_heads: Vec<Entity> = oxen
+        .iter()
+        .map(|o| crate::character::horse::tests::named(app.world(), o.0, "Head"))
+        .collect();
+    let ids: Vec<Entity> = oxen.iter().map(|o| o.0).collect();
+    assert!(respawn_scenes(app.world_mut(), &ids) >= 2);
+    let on_new_head = (0..300).any(|_| {
+        app.update();
+        dressed(&mut app).is_some_and(|(on, _)| on.iter().all(|j| !old_heads.contains(j)))
+    });
+    assert!(
+        on_new_head,
+        "the left ox never wore the yoke on its new head"
+    );
+    for _ in 0..20 {
+        app.update();
+        let now = yoke(&mut app);
+        assert!(now.len() <= 2, "dressed again: {now:?}");
+    }
     let (on, oxen) = wait(&mut app);
     // Its two materials (the wood and the hide straps), both on the left ox's
     // `Head` joint.
@@ -570,6 +592,41 @@ fn a_draught_horses_reins_stay_on_its_bit_as_it_turns_its_head_walks_and_gallops
         worst.1,
         worst.0
     );
+}
+
+/// Has the scenes under `of` (theirs and their descendants') created again,
+/// with new entities, as Bevy does when a scene asset changes: how many.
+fn respawn_scenes(world: &mut World, of: &[Entity]) -> usize {
+    use bevy::world_serialization::WorldAssetRoot;
+    let mut roots = Vec::new();
+    let mut stack = of.to_vec();
+    while let Some(e) = stack.pop() {
+        if world.get::<WorldAssetRoot>(e).is_some() {
+            roots.push(e);
+        }
+        stack.extend(world.get::<Children>(e).into_iter().flatten().copied());
+    }
+    for &e in &roots {
+        world.get_mut::<WorldAssetRoot>(e).unwrap().set_changed();
+    }
+    roots.len()
+}
+
+/// The harness pieces `dress_animals` hung on `animal` (skinned on its mesh
+/// node or rigid on a joint).
+fn harness_of(world: &mut World, animal: Entity) -> Vec<Entity> {
+    let mut found = Vec::new();
+    let mut stack = vec![animal];
+    while let Some(e) = stack.pop() {
+        if world
+            .get::<Name>(e)
+            .is_some_and(|n| n.as_str().starts_with("Harness "))
+        {
+            found.push(e);
+        }
+        stack.extend(world.get::<Children>(e).into_iter().flatten().copied());
+    }
+    found
 }
 
 /// A headless app with the fauna, characters and vehicles, and `visual`
@@ -758,7 +815,6 @@ fn a_respawned_horse_and_driver_keep_the_reins_and_the_breeching_on_their_new_jo
     // is drawn twice.
     use crate::character::horse::tests::try_named;
     use crate::character::tack::Strap;
-    use bevy::world_serialization::WorldAssetRoot;
     use models::{BREECH_JOINT, BreechingStrap, DriverRein};
     let (mut app, me, driver) = vehicle_ready(VehicleVisual::seeded(Vehicle::Sulky, 0, 7));
     let driver = driver.unwrap();
@@ -773,19 +829,11 @@ fn a_respawned_horse_and_driver_keep_the_reins_and_the_breeching_on_their_new_jo
         .map(|s| s.ends[0].0)
         .collect();
     let old_hand = try_named(world, driver, "hand_l").unwrap();
+    // Review R3-001 (L58): each horse's harness pieces, to come back once.
+    let old_harness: Vec<Vec<Entity>> = horses.iter().map(|&h| harness_of(world, h)).collect();
     // Their scenes created again: new joints.
-    let mut roots = Vec::new();
-    let mut stack: Vec<Entity> = horses.iter().copied().chain([driver]).collect();
-    while let Some(e) = stack.pop() {
-        if world.get::<WorldAssetRoot>(e).is_some() {
-            roots.push(e);
-        }
-        stack.extend(world.get::<Children>(e).into_iter().flatten().copied());
-    }
-    assert!(roots.len() > horses.len(), "{} scene roots", roots.len());
-    for e in roots {
-        world.get_mut::<WorldAssetRoot>(e).unwrap().set_changed();
-    }
+    let roots = respawn_scenes(world, &[horses.as_slice(), &[driver]].concat());
+    assert!(roots > horses.len(), "{roots} scene roots");
     let mut hand = None;
     for _ in 0..200 {
         app.update();
@@ -837,6 +885,23 @@ fn a_respawned_horse_and_driver_keep_the_reins_and_the_breeching_on_their_new_jo
             under(world, rein.horse, terret),
             "side {}: rein off its horse",
             rein.side
+        );
+    }
+    for (&horse, old) in horses.iter().zip(&old_harness) {
+        let new = harness_of(world, horse);
+        assert!(!new.is_empty(), "the harness never dressed again");
+        // Once: no piece (a name and its mesh) hung twice.
+        let mut seen = std::collections::HashSet::new();
+        for &e in &new {
+            let piece = (
+                world.get::<Name>(e).map(|n| n.as_str().to_owned()),
+                world.get::<Mesh3d>(e).map(|m| m.0.id()),
+            );
+            assert!(seen.insert(piece.clone()), "{piece:?} hung twice");
+        }
+        assert!(
+            new.iter().all(|e| !old.contains(e)),
+            "the harness of the old scene left on"
         );
     }
     let breeching: Vec<(BreechingStrap, Strap)> = world
