@@ -91,16 +91,20 @@ class Fittings(unittest.TestCase):
 
     def test_the_sulky_shafts_clear_henry_from_tip_to_breeching(self):
         import sulky
+        import sulky_gig
 
-        for side in (1, -1):
-            path = np.array(sulky.shaft_path(side), float)
-            # Along the horse, from the tip to its quarters.
-            fine = np.concatenate([np.linspace(a, b, 8, endpoint=False) for a, b in zip(path, path[1:])])
-            fine = fine[fine[:, 1] < H.BREECH[1] + 0.4]
-            d = Henry.off(fine, self.standing)
-            # The shaft is 5 cm across (``sulky.build``): its side keeps off
-            # the skin.
-            self.assertGreater(d.min(), 0.035, f"shaft {side:+} at {fine[d.argmin()].round(3)}: {d.min():.3f} m")
+        # Each shaft's half width along the horse (the sulky's is 4.2 cm
+        # across, the gig's tapers from 6 cm, ``sulky_gig.half_section``);
+        # its side keeps more than 1.4 cm off the skin.
+        for script, half in ((sulky, lambda y: 0.021), (sulky_gig, lambda y: sulky_gig.half_section(y)[0])):
+            for side in (1, -1):
+                path = np.array(script.shaft_path(side), float)
+                # Along the horse, from the tip to its quarters.
+                fine = np.concatenate([np.linspace(a, b, 8, endpoint=False) for a, b in zip(path, path[1:])])
+                fine = fine[fine[:, 1] < H.BREECH[1] + 0.4]
+                d = Henry.off(fine, self.standing) - np.array([half(y) for y in fine[:, 1]])
+                at = fine[d.argmin()].round(3)
+                self.assertGreater(d.min(), 0.014, f"{script.__name__} shaft {side:+} at {at}: {d.min():.3f} m")
 
 
 @unittest.skipIf(np is None, "needs numpy")

@@ -189,6 +189,58 @@ fn a_townsperson_sits_on_the_seat_once_posed() {
 }
 
 #[test]
+fn about_half_the_sulkies_are_the_gig_and_no_other_vehicle_is() {
+    // S11 (assumption): each sulky picks its model from its seed, the same
+    // every time, about half each; the other vehicles have one model.
+    let gigs = (0..1000)
+        .filter(|&seed| VehicleVisual::seeded(Vehicle::Sulky, 0, seed).variant == Variant::Gig)
+        .count();
+    assert!((400..=600).contains(&gigs), "{gigs} gigs in 1000 sulkies");
+    for seed in 0..1000 {
+        let sulky = VehicleVisual::seeded(Vehicle::Sulky, 0, seed);
+        assert_eq!(sulky, VehicleVisual::seeded(Vehicle::Sulky, 0, seed));
+        for vehicle in [Vehicle::Cart, Vehicle::Carreta, Vehicle::FordT] {
+            assert_eq!(
+                VehicleVisual::seeded(vehicle, 0, seed).variant,
+                Variant::Own
+            );
+        }
+    }
+}
+
+#[test]
+fn the_gig_draws_its_own_model_with_the_sulkys_two_rolling_wheels_and_seat() {
+    // S11: the gig (`sulky_gig.glb`) lives beside the sulky: its own scene,
+    // two wheels of 0.70 m that roll, the driver on its own seat.
+    use crate::character::horse::tests::try_named;
+    let gig = VehicleVisual::seeded(Vehicle::Sulky, 0, 7).with_variant(Variant::Gig);
+    let (mut app, me, driver) = vehicle_ready(gig);
+    assert!(
+        try_named(app.world(), me, "SulkyGig").is_some(),
+        "the gig's scene"
+    );
+    assert!(try_named(app.world(), me, "Sulky").is_none());
+    app.world_mut().entity_mut(me).insert(Rolled(1.1));
+    app.update();
+    let mut wheels = app.world_mut().query::<(&VehicleWheel, &Transform)>();
+    let wheels: Vec<_> = wheels.iter(app.world()).map(|(w, t)| (*w, *t)).collect();
+    assert_eq!(wheels.len(), 2, "two wheels");
+    for (wheel, t) in wheels {
+        assert_eq!(wheel.radius, 0.70);
+        assert!(t.rotation.abs_diff_eq(wheel_turn(1.1, 0.70), 1e-5));
+    }
+    let world = app.world_mut();
+    let seat = world
+        .query_filtered::<&Transform, With<VehicleSeat>>()
+        .single(world)
+        .unwrap()
+        .translation;
+    assert_eq!(seat, Layout::of(Vehicle::Sulky, Variant::Gig).seat);
+    assert_ne!(seat, Layout::of(Vehicle::Sulky, Variant::Own).seat);
+    assert!(driver.is_some(), "a driver on the seat");
+}
+
+#[test]
 fn a_vehicle_model_spins_its_wheels_with_the_distance_rolled() {
     use crate::gltf::tests::{root, unfinished_app};
     let mut app = unfinished_app(&root());
@@ -756,8 +808,14 @@ fn the_drivers_reins_end_in_his_left_hand_on_the_sulky_and_the_carreton() {
     // standing and on the move.
     use crate::character::horse::tests::try_named;
     use crate::character::rider::PALM;
-    for (vehicle, look) in [(Vehicle::Sulky, 0), (Vehicle::Sulky, 3), (Vehicle::Cart, 1)] {
-        let (mut app, me, driver) = vehicle_ready(VehicleVisual::seeded(vehicle, look, 7));
+    for (vehicle, variant, look) in [
+        (Vehicle::Sulky, Variant::Own, 0),
+        (Vehicle::Sulky, Variant::Own, 3),
+        (Vehicle::Sulky, Variant::Gig, 3),
+        (Vehicle::Cart, Variant::Own, 1),
+    ] {
+        let visual = VehicleVisual::seeded(vehicle, look, 7).with_variant(variant);
+        let (mut app, me, driver) = vehicle_ready(visual);
         let driver = driver.unwrap();
         let want = 2 * vehicle.horses();
         let mut fewest: (usize, String) = (usize::MAX, String::new());
@@ -786,7 +844,7 @@ fn the_drivers_reins_end_in_his_left_hand_on_the_sulky_and_the_carreton() {
                 if n < fewest.0 {
                     fewest = (
                         n,
-                        format!("{vehicle:?} look {look} {animation:?} frame {frame}"),
+                        format!("{vehicle:?} {variant:?} look {look} {animation:?} frame {frame}"),
                     );
                 }
             }
@@ -1029,12 +1087,16 @@ fn nothing_of_the_sulky_goes_through_its_horses_croup() {
     // S10 (L52): "en el sulky las riendas o frenos atraviezan la nalga o
     // cadera del caballo". No vertex of the sulky (its reins and the
     // breeching straps the game draws included) lies more than a centimetre
-    // inside the horse's quarters, within 45 cm of its croup.
+    // inside the horse's quarters, within 45 cm of its croup; on the gig too
+    // (S11).
     use crate::character::bones::HorseJoint;
-    let (mut app, me, driver) = vehicle_ready(VehicleVisual::seeded(Vehicle::Sulky, 0, 7));
-    let (deep, at) = deepest_near(&mut app, me, driver, HorseJoint::Croup, 0.45, None);
-    println!("deepest sulky vertex in the croup: {deep:.3} m ({at})");
-    assert!(deep > -0.01, "{at}: {deep} m inside the croup");
+    for variant in [Variant::Own, Variant::Gig] {
+        let visual = VehicleVisual::seeded(Vehicle::Sulky, 0, 7).with_variant(variant);
+        let (mut app, me, driver) = vehicle_ready(visual);
+        let (deep, at) = deepest_near(&mut app, me, driver, HorseJoint::Croup, 0.45, None);
+        println!("{variant:?}: deepest sulky vertex in the croup: {deep:.3} m ({at})");
+        assert!(deep > -0.01, "{variant:?} {at}: {deep} m inside the croup");
+    }
 }
 
 #[test]
@@ -1045,9 +1107,15 @@ fn the_traces_run_along_the_flank_outside_the_skin_on_both_vehicles() {
     // (the traces, the breeching straps' ends round the shafts) is more than
     // a centimetre inside the skin (the traces start on the collar's end, on
     // the skin). The breeching straps the game draws are the croup test's.
+    // The gig's traces too (S11).
     use crate::character::bones::HorseJoint;
-    for vehicle in [Vehicle::Sulky, Vehicle::Cart] {
-        let (mut app, me, driver) = vehicle_ready(VehicleVisual::seeded(vehicle, 0, 7));
+    for (vehicle, variant) in [
+        (Vehicle::Sulky, Variant::Own),
+        (Vehicle::Sulky, Variant::Gig),
+        (Vehicle::Cart, Variant::Own),
+    ] {
+        let visual = VehicleVisual::seeded(vehicle, 0, 7).with_variant(variant);
+        let (mut app, me, driver) = vehicle_ready(visual);
         let (deep, at) = deepest_near(
             &mut app,
             me,
@@ -1056,7 +1124,10 @@ fn the_traces_run_along_the_flank_outside_the_skin_on_both_vehicles() {
             0.55,
             Some("Leather"),
         );
-        println!("{vehicle:?}: deepest vertex in the barrel: {deep:.3} m ({at})");
-        assert!(deep > -0.01, "{vehicle:?} {at}: {deep} m inside the barrel");
+        println!("{vehicle:?} {variant:?}: deepest vertex in the barrel: {deep:.3} m ({at})");
+        assert!(
+            deep > -0.01,
+            "{vehicle:?} {variant:?} {at}: {deep} m inside the barrel"
+        );
     }
 }

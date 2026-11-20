@@ -134,6 +134,16 @@ This work is based on "Horse" (https://sketchfab.com/3d-models/horse-a6f860e43e3
 
 See `assets/models/fauna/henry/CREDITS.md` for details.
 
+### Horse Drawn Carriage 5 by gogiart
+
+This work is based on "Horse Drawn Carriage 5" (https://sketchfab.com/3d-models/horse-drawn-carriage-5-f3db55361be842e49db81c444f78518f) by gogiart licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Horse Drawn Carriage 5 (the gig, the second sulky) | gogiart, Sketchfab (https://sketchfab.com/3d-models/horse-drawn-carriage-5-f3db55361be842e49db81c444f78518f) | CC BY 4.0 (attribution required) | `assets/models/vehicles/sulky_gig.glb`, `assets/textures/vehicles/gig_*/` | Converted by `tools/sulky_gig.py` (downloaded 2026-11-13, GLB): turned to the game's axes and scaled to wheels of 1.40 m; the wheels split into their own nodes; the shafts bent and tapered in front of the body onto the sulky's line along the game's horse; decimated from 284,382 to about 20,400 triangles, with light LOD meshes; a road-dirt tint added; the materials renamed; traces, trace hooks and breeching bands added (own); each colour map kept at its size, with a roughness and a normal map made from it, converted to KTX2 |
+
+See `assets/models/vehicles/CREDITS.md` for details.
+
 ### Raptor feather scans and face photographs
 
 The chimango and carancho models (`tools/raptor.py`) are modelled and painted procedurally. Since v4 (2026-11-03), the feather atlas and the heads also carry real pixels from the sources below. `tools/raptor.py --scans DIR --faces DIR` bakes them into each species' `*_feathers` atlas and `*_body` colour map. The game draws the birds with these maps: they ship as KTX2 (with their JPG sources) in `assets/models/fauna/own/chimango_body/`, `chimango_feathers/`, `carancho_body/` and `carancho_feathers/`, next to `chimango.glb` and `carancho.glb`.

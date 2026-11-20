@@ -46,7 +46,9 @@ planta en el camino lo pasan por el costado, y antes de un paso a nivel esperan
 a que pase el tren. Los vehículos son modelos propios hechos en Blender por
 script (`tools/sulky.py`, `tools/carreton.py`, `tools/carreta.py`,
 `tools/ford_t.py`, con madera, pintura, hierro, cuero, caña y bronce pintados
-por `tools/vehicle.py`): las ruedas giran con lo que avanzan, los caballos de
+por `tools/vehicle.py`), salvo la mitad de los sulkies, que son el gig "Horse
+Drawn Carriage 5" de gogiart (Sketchfab, CC BY 4.0, adaptado por
+`tools/sulky_gig.py`, ver `CREDITS.md`): las ruedas giran con lo que avanzan, los caballos de
 tiro (el caballo criollo propio) llevan pechera, sillín, retranca y cabezada
 con anteojeras (`tools/vehicle_harness.py`), y los bueyes (`tools/cattle.py
 --ox`, novillos criollos de cuernos largos) andan al paso del vehículo bajo el
