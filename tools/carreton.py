@@ -19,8 +19,9 @@ sizes:
   front with a backrest and a sloping footboard;
 - the pole (lanza) between the two horses, the neck yoke at its tip, the
   doubletree and two singletrees, the traces to each horse's breast collar
-  and the four lines from the bits to the driver's hands (static: the
-  harness on the horses is ``tools/vehicle_harness.py``);
+  and no lines: the harness on the horses (``tools/vehicle_harness.py``)
+  carries them from the bits to the terrets, and the game draws them on
+  from the terrets to the driver's left hand;
 - the brake: a lever by the seat, its rod and the beam with a block
   against each rear tyre.
 
@@ -133,7 +134,8 @@ def build():
                      up=(0, 1, 0), scales=[0.7, 1.0, 0.7]))
     for sx in (1.0, -1.0):
         a = (0.48 * sx, -0.86, 1.05)
-        b = ((HORSE_X - H.TRACE[0] - 0.02) * sx, -0.85 + 0.0, 1.11)
+        # The pole strap, to the breast collar's inner side.
+        b = ((HORSE_X - 0.19) * sx, H.TRACE[1] - 0.23, H.TRACE[2])
         m.extend(V.sweep([a, V.lerp(a, b, 0.5), b], V.rect(0.03, 0.008, 0.002), leather, (0.4, 0.05), up=(0, 1, 0)))
     dt_y, dt_z = 1.30, 0.80
     m.extend(V.sweep([(-0.62, dt_y, dt_z), (0, dt_y, dt_z + 0.01), (0.62, dt_y, dt_z)], V.ellipse(0.07, 0.06, 10), wood, (0.8, 0.15),
@@ -147,19 +149,12 @@ def build():
             a = (cx + H.TRACE[0] * side, H.TRACE[1], H.TRACE[2])
             b = (cx + 0.34 * side, dt_y - 0.12, dt_z + 0.15)
             mid = V.lerp(a, b, 0.5)
-            flank = (cx + (H.SIDE[0] + 0.025) * side, mid[1], mid[2] - 0.05)
+            flank = (cx + (H.SIDE[0] + H.TRACE_OUT) * side, mid[1], mid[2] - 0.05)
             trace = V.bezier(a, V.lerp(a, flank, 0.6), V.lerp(flank, b, 0.4), b, 14)
             m.extend(V.sweep(trace, V.rect(0.035, 0.008, 0.002), leather, (0.4, 0.05), up=(1, 0, 0)))
-    # The lines: from each bit, through the pad's terrets, to the hands.
-    for sx in (1.0, -1.0):
-        cx = HORSE_X * sx
-        for side in (1.0, -1.0):
-            bit = (cx + H.BIT[0] * side, H.BIT[1], H.BIT[2])
-            terret = (cx + H.TERRET[0] * side, H.TERRET[1], H.TERRET[2] + 0.02)
-            hand = (0.12 * (1 if side * sx > 0 else -1) * (1 if sx > 0 else 1), sy - 0.45, sz + 0.18)
-            line = V.bezier(bit, V.add(bit, (0, 0.35, -0.12)), V.add(terret, (0, -0.4, -0.06)), terret, 8)
-            line += V.bezier(terret, V.add(terret, (0, 0.8, -0.10)), V.add(hand, (0, -0.8, -0.20)), hand, 12)[1:]
-            m.extend(V.sweep(line, V.rect(0.005, 0.02, 0.0015), leather, (0.4, 0.05), up=(1, 0, 0)))
+    # No lines: from the bits to the terrets they are the harness's, and the
+    # game runs them on from the terrets to the driver's left hand
+    # (``vehicle::models::rein_drivers``).
     v.markers["Seat"] = SEAT
     v.markers["Animal.0"] = (HORSE_X, 0.0, 0.0)
     v.markers["Animal.1"] = (-HORSE_X, 0.0, 0.0)

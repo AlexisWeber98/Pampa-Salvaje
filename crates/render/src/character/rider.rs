@@ -1,5 +1,6 @@
 //! El jinete sobre el caballo modelo: un modelo de MakeHuman (ver
-//! [`model`](super::model)) sentado sobre el hueso `Torso` del caballo (ver
+//! [`model`](super::model)) sentado sobre el hueso `Torso` del caballo
+//! ([`HorseBone::Torso`](super::tack::HorseBone): `BN_Spine_01` de henry; ver
 //! [`horse`](super::horse)), así que sube, cabecea y gira con el propio clip
 //! del caballo y se mantiene a su paso sin costo extra.
 //!
@@ -959,6 +960,13 @@ type Sitter = (
 /// Ajusta cada jinete que se reproduce a su caballo (ver las notas del módulo),
 /// después de que los clips lo pusieron en pose (a él y al caballo) y antes de
 /// que se calculen los transforms.
+///
+/// While a rider is mounted this system owns the end of the horse's right
+/// rein (`Strap::ends[1]` of `Tack::reins[1]`): every frame it puts it
+/// where [`rein_end`] says (the left hand, or the right one in the
+/// half-seat). Anything that later hands that rein elsewhere (dismounting,
+/// leading the horse by it) must first take the rider off the horse, or this
+/// system overwrites it on the next frame.
 pub(super) fn pose_riders(
     time: Res<Time>,
     clips: Option<Res<CharacterClips>>,
@@ -1270,6 +1278,9 @@ pub(super) fn pose_riders(
         // Los hombros acompañan al torso, con retraso: hacia arriba cuando la
         // montura baja, hacia adelante cuando cabecea hacia abajo.
         let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), SHRUG_EASE, dt);
+        // Where the left (rein) hand goes, once worked out: the right one
+        // meets it there.
+        let mut left_hand = None;
         for s in 0..2 {
             let side = if s == 0 { 1.0 } else { -1.0 };
             if let Ok(mut t) = transforms.get_mut(seated.bone(Bone::Clavicle(s))) {
@@ -1297,12 +1308,17 @@ pub(super) fn pose_riders(
                 lower.translation.length() + wrist.translation.length(),
             ));
             let arm = [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
+            let mut target = clear_of_chest(fit_hand(hands[s], s, fit), chest.translation, half);
+            match left_hand {
+                None => left_hand = Some(target),
+                Some(left) => target = meet_left(target, left, half),
+            }
             reach(
                 &mut transforms,
                 shoulder,
                 arm,
                 within_reach(
-                    clear_of_chest(fit_hand(hands[s], s, fit), chest.translation, half),
+                    target,
                     shoulder.then(&upper).translation,
                     fit.1,
                     REACH.0 + (REACH.1 - REACH.0) * half,
@@ -1322,6 +1338,18 @@ pub(super) fn pose_riders(
             }
         }
     }
+}
+
+/// The right hand's target `right` drawn to the left hand's `left` (both
+/// model space, fitted to this rider's arms) as it comes to take its rein:
+/// all the way to [`MEET`] beside it half way into the half-seat (`half`
+/// 0.5, where the rein changes hands), not at all sitting or in the full
+/// half-seat. Fitting each hand to its own shoulder ([`fit_hand`]) and the
+/// rein hand's give to the mouth moved the two apart: the rein's end jumped
+/// 13-16 cm between the palms.
+pub fn meet_left(right: Vec3, left: Vec3, half: f32) -> Vec3 {
+    let pull = 1.0 - (2.0 * half - 1.0).abs();
+    right.lerp(left + MEET, pull.clamp(0.0, 1.0))
 }
 
 /// Where rein `s` (0 the left) ends on the rider: both in the left hand, a
@@ -2267,7 +2295,9 @@ pub(crate) mod tests {
     /// The rider model on `carrier`, once its scene (maybe being created again
     /// in parallel runs) has its bones: riding on at `speed` until then.
     fn posed_model(app: &mut App, me: Entity, carrier: Entity, speed: f32) -> Entity {
-        for _ in 0..600 {
+        // Under a loaded full run the scene can take a while to come back.
+        const PATIENCE: usize = 3000;
+        for _ in 0..PATIENCE {
             let world = app.world();
             if let Some(m) = try_named(world, carrier, "Rider model")
                 .filter(|m| try_named(world, *m, "hand_l").is_some())
@@ -2276,7 +2306,7 @@ pub(crate) mod tests {
             }
             ride(app, me, speed);
         }
-        panic!("no rider model with a hand_l after 600 frames");
+        panic!("no rider model with a hand_l after {PATIENCE} frames of riding at {speed} m/s");
     }
 
     /// How far the bone lines of the rein arm (the left) and of the free arm
@@ -2670,6 +2700,67 @@ pub(crate) mod tests {
         // At the gallop the right hand holds its rein: a fist like the left.
         let (free, reins, _) = curls(&mut app, 12.2);
         assert!(free > reins * 0.8, "gallop: free {free}, reins {reins}");
+    }
+
+    #[test]
+    fn going_into_the_gallop_the_right_hand_takes_its_rein_beside_the_left_closed() {
+        // S9: from the thigh the right hand comes to the left one on the
+        // reins ([`MEET`], half way into the half-seat), closing its fingers
+        // on the way, and takes the right rein there: the rein's end moves
+        // from one palm to the other, so the palms must be close then.
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = seated_every(rider, 1.5, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..160 {
+            ride(&mut app, me, 1.5);
+        }
+        // On the frame the right rein changes hands: the palms apart (where
+        // its end was against where it is) and the right middle finger's
+        // curl over the left one's (1: a fist like the hand on the reins).
+        let mut switch = None;
+        let mut seen = 0;
+        for _ in 0..200 {
+            ride(&mut app, me, 12.2);
+            let world = app.world();
+            let Some(model) = try_named(world, carrier, "Rider model") else {
+                continue;
+            };
+            let (Some(seated), Some(tack)) =
+                (world.get::<Seated>(model), world.get::<Tack>(carrier))
+            else {
+                continue;
+            };
+            let found = ["middle_02_l", "middle_02_r"].map(|n| try_named(world, model, n));
+            let [Some(fl), Some(fr)] = found else {
+                continue;
+            };
+            seen += 1;
+            let end = world.get::<Strap>(tack.reins[1]).unwrap().ends[1];
+            if end.0 != seated.bone(Bone::Hand(1)) {
+                continue;
+            }
+            let at = |(e, p): (Entity, Vec3)| {
+                world.get::<GlobalTransform>(e).unwrap().transform_point(p)
+            };
+            let curl = |e: Entity| {
+                world
+                    .get::<Transform>(e)
+                    .unwrap()
+                    .rotation
+                    .angle_between(Quat::IDENTITY)
+            };
+            let was = at(rein_end(seated, 1, false));
+            switch = Some((was.distance(at(end)), curl(fr) / curl(fl).max(1e-3)));
+            break;
+        }
+        let (apart, closed) =
+            switch.unwrap_or_else(|| panic!("never changed hands ({seen} frames)"));
+        println!("the right rein changes hands {apart:.3} m apart, the fist closed x{closed:.2}");
+        assert!(apart < 0.1, "the rein's end jumps {apart} m");
+        assert!(closed > 0.8, "the right hand closed only x{closed}");
     }
 
     #[test]
