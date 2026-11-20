@@ -1,7 +1,9 @@
 //! Los modelos de los vehículos, hechos en Blender por script
 //! (`tools/sulky.py`, `tools/carreton.py`, `tools/carreta.py`,
-//! `tools/ford_t.py`), sus arreos (`tools/vehicle_harness.py`) y el buey de la
-//! carreta (`tools/cattle.py --ox`).
+//! `tools/ford_t.py`; el gig, la otra variante del sulky, de un modelo de
+//! Sketchfab con `tools/sulky_gig.py`), sus arreos
+//! (`tools/vehicle_harness.py`) y el buey de la carreta (`tools/cattle.py
+//! --ox`).
 //!
 //! - Cada vehículo es una escena glTF colgada del cuerpo del vehículo, girada
 //!   de su +Z (su frente en el glTF) al +X del cuerpo. Sus nodos `Wheel.*`
@@ -30,7 +32,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use pampa_core::Vehicle;
 
-use super::{Rolled, VehicleHorse, VehicleSeat, VehicleWheel};
+use super::{Rolled, Variant, VehicleHorse, VehicleSeat, VehicleWheel};
 use crate::AssetRoot;
 use crate::character::rider::PALM;
 use crate::character::tack::{SAG_PARTS, Strap, StrapPart, strap_mesh};
@@ -49,9 +51,10 @@ pub const LOD_NEAR: f32 = 45.0;
 /// del modelo, como `Species::Bull`), la misma con la que se ajustó el yugo.
 pub const OX_SCALE: f32 = 1.55 / 1.40;
 
-/// El archivo del modelo de `vehicle`.
-pub fn model_path(vehicle: Vehicle) -> String {
+/// El archivo del modelo `variant` de `vehicle` (solo el sulky tiene el gig).
+pub fn model_path(vehicle: Vehicle, variant: Variant) -> String {
     let name = match vehicle {
+        Vehicle::Sulky if variant == Variant::Gig => "sulky_gig",
         Vehicle::Sulky => "sulky",
         Vehicle::Cart => "carreton",
         Vehicle::Carreta => "carreta",
@@ -75,6 +78,16 @@ pub fn material_set(name: &str) -> Option<(&'static str, f32)> {
         "Leather" => ("veh_leather", 0.0),
         "Brass" => ("veh_brass", 1.0),
         "Rubber" => ("veh_rubber", 0.0),
+        // El gig (`tools/sulky_gig.py` `MATERIALS`): los mapas de su modelo.
+        "Gig_Paint" => ("gig_paint", 0.0),
+        "Gig_Planks" => ("gig_planks", 0.0),
+        "Gig_Iron" => ("gig_iron", 0.7),
+        "Gig_Steel" => ("gig_steel", 0.7),
+        "Gig_Hub" => ("gig_hub", 0.0),
+        "Gig_Leather" => ("gig_leather", 0.0),
+        "Gig_Hide" => ("gig_hide", 0.0),
+        "Gig_Wood" => ("gig_wood", 0.0),
+        "Gig_Floor" => ("gig_floor", 0.0),
         _ => return None,
     })
 }
@@ -116,7 +129,7 @@ pub struct OxModel {
 /// se dibuja sin cuerpo: sus caballos y su conductor siguen ahí).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct VehicleModels {
-    pub scenes: HashMap<Vehicle, Handle<WorldAsset>>,
+    pub scenes: HashMap<(Vehicle, Variant), Handle<WorldAsset>>,
     pub harness: Option<Handle<Gltf>>,
     pub yoke: Option<Handle<Gltf>>,
     pub ox: Option<OxModel>,
@@ -176,14 +189,16 @@ pub fn load_vehicle_models(
     let mut models = VehicleModels::default();
     let mut mats = VehicleMaterials::default();
     if let (Some(server), Some(root), Some(materials)) = (server, root, materials.as_mut()) {
-        for vehicle in [
-            Vehicle::Sulky,
-            Vehicle::Cart,
-            Vehicle::Carreta,
-            Vehicle::FordT,
+        for key @ (vehicle, variant) in [
+            (Vehicle::Sulky, Variant::Own),
+            (Vehicle::Sulky, Variant::Gig),
+            (Vehicle::Cart, Variant::Own),
+            (Vehicle::Carreta, Variant::Own),
+            (Vehicle::FordT, Variant::Own),
         ] {
-            if let Some(scene) = gltf::load_scene(&server, Some(&root), &model_path(vehicle)) {
-                models.scenes.insert(vehicle, scene);
+            let path = model_path(vehicle, variant);
+            if let Some(scene) = gltf::load_scene(&server, Some(&root), &path) {
+                models.scenes.insert(key, scene);
             }
         }
         let load = |name: &str| {
@@ -214,6 +229,15 @@ pub fn load_vehicle_models(
             "Leather",
             "Brass",
             "Rubber",
+            "Gig_Paint",
+            "Gig_Planks",
+            "Gig_Iron",
+            "Gig_Steel",
+            "Gig_Hub",
+            "Gig_Leather",
+            "Gig_Hide",
+            "Gig_Wood",
+            "Gig_Floor",
         ] {
             let (set, metal) = material_set(name).expect("a set");
             let path = |map: &str| format!("{TEXTURES_DIR}/{set}/{map}.ktx2");
@@ -850,7 +874,9 @@ pub const BREECH_JOINT: &str = "BN_Spine_00_02_02";
 /// Where the sulky's left breeching strap is buckled round its left shaft, in
 /// the body's space (`tools/sulky.py` `shaft_at(1, BREECH_TIE)`; Blender
 /// (x, y, z) is here (-y, z, -x); `tools/test_vehicle.py` checks it); the right
-/// mirrors Z.
+/// mirrors Z. The same on the gig, whose shafts `tools/sulky_gig.py` bends onto
+/// the sulky's line along the horse (`tools/test_sulky_gig.py` checks its
+/// shaft there).
 pub const SULKY_BREECH_TIE: Vec3 = Vec3::new(-0.40, 1.046, -0.354);
 
 /// A breeching strap's width and its thickness over that width

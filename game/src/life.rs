@@ -30,8 +30,8 @@ use pampa_core::{
 };
 use pampa_render::character::{Fading, Rising};
 use pampa_render::{
-    ActiveTowns, CharacterVisual, CheeseStall, Coat, FigureKind, MapIcon, Rolled, VehicleVisual,
-    VisualPose, WorldClock, WorldTowns, WorldTrains, world_from_ground,
+    ActiveTowns, CharacterVisual, CheeseStall, Coat, FigureKind, MapIcon, Rolled, Variant,
+    VehicleVisual, VisualPose, WorldClock, WorldTowns, WorldTrains, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -128,6 +128,32 @@ pub struct ParkedVehicles(pub Vec<Vec<Parked>>);
 impl ParkedVehicles {
     pub fn for_towns(towns: &[TownLayout]) -> Self {
         Self(towns.iter().map(pampa_core::parked_in).collect())
+    }
+
+    /// El modelo con que se dibuja cada vehículo de `town`, en su orden. Los
+    /// sulkies estacionados se turnan los dos modelos a lo largo del mundo
+    /// (el propio, el gig, el propio...), contando en el orden de los pueblos,
+    /// para que los dos convivan siempre (S11 de `henry-horse.md`); los demás
+    /// vehículos tienen un solo modelo.
+    pub fn variants(&self, town: usize) -> Vec<Variant> {
+        let is_sulky = |p: &&Parked| p.vehicle == pampa_core::Vehicle::Sulky;
+        let mut nth = self.0.iter().take(town).flatten().filter(is_sulky).count();
+        self.0.get(town).map_or_else(Vec::new, |vehicles| {
+            vehicles
+                .iter()
+                .map(|p| {
+                    if !is_sulky(&p) {
+                        return Variant::Own;
+                    }
+                    nth += 1;
+                    if nth % 2 == 0 {
+                        Variant::Gig
+                    } else {
+                        Variant::Own
+                    }
+                })
+                .collect()
+        })
     }
 
     /// Lo que ocupan los de `town`.
@@ -436,8 +462,16 @@ fn populate_towns(
         if let Some(riders) = horsemen.as_ref().and_then(|h| h.0.get(town)) {
             spawn_horsemen(&mut commands, riders, town, &world);
         }
-        if let Some(vehicles) = parked.as_ref().and_then(|p| p.0.get(town)) {
-            spawn_parked(&mut commands, vehicles, town, &world);
+        if let Some(parked) = parked.as_ref()
+            && let Some(vehicles) = parked.0.get(town)
+        {
+            spawn_parked(
+                &mut commands,
+                vehicles,
+                &parked.variants(town),
+                town,
+                &world,
+            );
         }
         if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
             && !led_away.0.contains(&town)
@@ -714,10 +748,17 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
 
 /// Los vehículos estacionados de `town`, quietos con sus animales y su
 /// conductor sentado, salvo los que esperan solos ([`Parked::driven`]).
-fn spawn_parked(commands: &mut Commands, vehicles: &[Parked], town: usize, world: &GameWorld) {
+fn spawn_parked(
+    commands: &mut Commands,
+    vehicles: &[Parked],
+    variants: &[Variant],
+    town: usize,
+    world: &GameWorld,
+) {
     for (index, p) in vehicles.iter().enumerate() {
         let height = world.0.ground_height(p.position);
-        let visual = VehicleVisual::seeded(p.vehicle, (p.seed >> 24) as u8, p.seed);
+        let visual = VehicleVisual::seeded(p.vehicle, (p.seed >> 24) as u8, p.seed)
+            .with_variant(variants[index]);
         commands.spawn((
             Name::new(format!("Parked {:?} {town}.{index}", p.vehicle)),
             ParkedVehicle { town, index },
@@ -1421,6 +1462,32 @@ mod tests {
     }
 
     #[test]
+    fn the_parked_sulkies_take_turns_with_both_models_across_the_world() {
+        let parked = |vehicle| Parked {
+            vehicle,
+            position: Vec2::ZERO,
+            heading: Heading::from_radians(0.0),
+            seed: 0,
+        };
+        let world = ParkedVehicles(vec![
+            vec![parked(Vehicle::Sulky), parked(Vehicle::Cart)],
+            vec![],
+            vec![parked(Vehicle::Sulky)],
+            vec![parked(Vehicle::Sulky)],
+        ]);
+        let all: Vec<_> = (0..4).map(|town| world.variants(town)).collect();
+        assert_eq!(
+            all,
+            [
+                vec![Variant::Own, Variant::Own],
+                vec![],
+                vec![Variant::Gig],
+                vec![Variant::Own],
+            ]
+        );
+    }
+
+    #[test]
     fn a_towns_parked_vehicles_stand_with_it_block_the_player_and_leave_with_it() {
         let city = TownLayout::generate(&pampa_core::TownConfig {
             name: pampa_core::TownConfig::TOWN_HALL_TOWN.into(),
@@ -1474,6 +1541,40 @@ mod tests {
         app.update();
         let mut left = app.world_mut().query::<&ParkedVehicle>();
         assert_eq!(left.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn each_parked_sulky_is_spawned_with_its_turn_of_model() {
+        let city = TownLayout::generate(&pampa_core::TownConfig {
+            name: pampa_core::TownConfig::TOWN_HALL_TOWN.into(),
+            blocks: (8, 8),
+            ..pampa_core::TownConfig::castex()
+        })
+        .unwrap();
+        let mut app = app_with(vec![city.clone()], 0);
+        // Todos sulkies y con la misma semilla: sin el turno, todos sacarían
+        // el mismo modelo de la semilla.
+        let sulkies: Vec<Parked> = pampa_core::parked_in(&city)
+            .into_iter()
+            .map(|p| Parked {
+                vehicle: Vehicle::Sulky,
+                seed: 0,
+                ..p
+            })
+            .collect();
+        assert!(sulkies.len() >= 2, "{sulkies:?}");
+        app.insert_resource(ParkedVehicles(vec![sulkies]));
+        app.update();
+        let wanted = app.world().resource::<ParkedVehicles>().variants(0);
+        let mut query = app.world_mut().query::<(&ParkedVehicle, &VehicleVisual)>();
+        let mut found: Vec<_> = query
+            .iter(app.world())
+            .map(|(p, v)| (p.index, v.variant))
+            .collect();
+        found.sort_by_key(|(index, _)| *index);
+        let found: Vec<_> = found.into_iter().map(|(_, variant)| variant).collect();
+        assert_eq!(found, wanted);
+        assert!(found.contains(&Variant::Own) && found.contains(&Variant::Gig));
     }
 
     #[test]

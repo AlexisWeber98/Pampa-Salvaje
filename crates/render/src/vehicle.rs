@@ -30,26 +30,48 @@ pub use models::{
     wheel_radius, wheel_turn,
 };
 
-/// Cómo se dibuja un vehículo: cuál, quién lo maneja (nadie en un vehículo que
-/// espera solo) y el pelaje de cada caballo (el segundo solo lo usa el
-/// carretón).
+/// Qué modelo dibuja un vehículo: el propio (`tools/sulky.py` y los demás
+/// scripts) o, para el sulky, el gig de gogiart (`tools/sulky_gig.py`), que
+/// lleva el mismo caballo, las mismas ruedas y las varas por la misma línea
+/// a lo largo del caballo, así que las riendas y la retranca le calzan
+/// igual; solo su asiento está en otro lugar ([`Layout::of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Variant {
+    #[default]
+    Own,
+    Gig,
+}
+
+/// Cómo se dibuja un vehículo: cuál, con qué modelo, quién lo maneja (nadie
+/// en un vehículo que espera solo) y el pelaje de cada caballo (el segundo
+/// solo lo usa el carretón).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 #[require(VisualPose, Rolled, Transform, Visibility)]
 pub struct VehicleVisual {
     pub vehicle: Vehicle,
+    pub variant: Variant,
     pub driver: Option<FigureKind>,
     pub coats: [Coat; 2],
 }
 
 impl VehicleVisual {
     /// El vehículo de un vecino de apariencia `look`, con los pelajes sembrados
-    /// a partir de `coat`.
+    /// a partir de `coat`; un sulky es el gig para más o menos la mitad de
+    /// las semillas (supuesto de S11: cada sulky elige su modelo, siempre el
+    /// mismo para la misma semilla).
     pub fn seeded(vehicle: Vehicle, look: u8, coat: u32) -> Self {
+        let gig = vehicle == Vehicle::Sulky && coat.wrapping_mul(0x9E37_79B9) >> 31 == 1;
         Self {
             vehicle,
+            variant: if gig { Variant::Gig } else { Variant::Own },
             driver: Some(FigureKind::townsfolk(look)),
             coats: [Coat::seeded(coat), Coat::seeded(coat.rotate_left(16))],
         }
+    }
+
+    /// El mismo vehículo, dibujado con el modelo `variant`.
+    pub fn with_variant(self, variant: Variant) -> Self {
+        Self { variant, ..self }
     }
 
     /// El mismo vehículo, sin nadie en el asiento.
@@ -109,8 +131,13 @@ const PAIR: [Vec3; 2] = [Vec3::new(0.0, 0.0, -0.62), Vec3::new(0.0, 0.0, 0.62)];
 const YOKED: [Vec3; 2] = [Vec3::new(0.0, 0.0, -OX_X), Vec3::new(0.0, 0.0, OX_X)];
 
 impl Layout {
-    pub fn of(vehicle: Vehicle) -> Self {
+    pub fn of(vehicle: Vehicle, variant: Variant) -> Self {
         match vehicle {
+            // `tools/sulky_gig.py` `SEAT`.
+            Vehicle::Sulky if variant == Variant::Gig => Self {
+                animals: &[Vec3::ZERO],
+                seat: Vec3::new(-2.45, 1.47, 0.0),
+            },
             Vehicle::Cart => Self {
                 animals: &PAIR,
                 seat: Vec3::new(-1.88, 1.74, 0.0),
@@ -175,7 +202,7 @@ fn attach_vehicles(
         if let Some(parts) = parts {
             commands.entity(parts.body).try_despawn();
         }
-        let layout = Layout::of(visual.vehicle);
+        let layout = Layout::of(visual.vehicle, visual.variant);
         let body = commands
             .spawn((
                 Name::new("Vehicle body"),
@@ -192,7 +219,10 @@ fn attach_vehicles(
             Visibility::default(),
             ChildOf(body),
         ));
-        if let Some(scene) = models.as_ref().and_then(|m| m.scenes.get(&visual.vehicle)) {
+        if let Some(scene) = models
+            .as_ref()
+            .and_then(|m| m.scenes.get(&(visual.vehicle, visual.variant)))
+        {
             model.insert(ModelLoading(scene.clone()));
         }
         for (k, (&at, &coat)) in layout.animals.iter().zip(&visual.coats).enumerate() {

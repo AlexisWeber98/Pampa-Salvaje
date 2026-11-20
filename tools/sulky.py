@@ -57,40 +57,51 @@ SINGLETREE_Y = 1.24
 BREECH_TIE = H.BREECH[1] + 0.06
 
 
-def shaft_path(sx):
-    """The left shaft (``sx`` = +1) or the right (-1), tip to tail: from in
-    front of the point of the shoulder, through the tug, past the quarters
-    and out to the seat."""
+def shaft_front(sx):
+    """The stretch of the left shaft (``sx`` = +1) or the right (-1) along
+    henry, tip to quarters: from in front of the point of the shoulder,
+    through the tug, past the breeching to beside the quarters. The gig
+    (``tools/sulky_gig.py``) bends its shafts onto it too."""
     tip = (0.30 * sx, H.TRACE[1] - 0.32, H.TUG[2] + 0.04)
     tug = (H.TUG[0] * sx, H.TUG[1], H.TUG[2])
     hind = (0.37 * sx, 0.70, 1.02)
+    p = V.bezier(tip, (0.31 * sx, tip[1] + 0.23, tip[2] - 0.04), (tug[0], tug[1] - 0.25, tug[2]), tug, 6)
+    p += V.bezier(tug, (tug[0], tug[1] + 0.35, tug[2]), (hind[0], hind[1] - 0.3, hind[2]), hind, 5)[1:]
+    return p
+
+
+def shaft_path(sx):
+    """The left shaft (``sx`` = +1) or the right (-1), tip to tail: along
+    the horse (``shaft_front``) and out to the seat."""
+    p = shaft_front(sx)
+    hind = p[-1]
     bar = (0.44 * sx, 1.30, 0.98)
     seat = (0.46 * sx, 2.10, 0.98)
     tail = (0.46 * sx, 2.78, 0.96)
-    p = V.bezier(tip, (0.31 * sx, tip[1] + 0.23, tip[2] - 0.04), (tug[0], tug[1] - 0.25, tug[2]), tug, 6)
-    p += V.bezier(tug, (tug[0], tug[1] + 0.35, tug[2]), (hind[0], hind[1] - 0.3, hind[2]), hind, 5)[1:]
     p += V.bezier(hind, (hind[0], hind[1] + 0.25, hind[2]), (bar[0] - 0.03 * sx, bar[1] - 0.2, bar[2]), bar, 4)[1:]
     p += [seat, tail]
     return p
 
 
-def shaft_at(sx, y):
-    """The point of a shaft's middle line at ``y``."""
-    path = shaft_path(sx)
+def shaft_at(sx, y, path=None):
+    """The point of a shaft's middle line at ``y`` (of ``path``, the
+    sulky's ``shaft_path(sx)`` by default)."""
+    path = path or shaft_path(sx)
     for a, b in zip(path, path[1:]):
         if a[1] <= y <= b[1]:
             return V.lerp(a, b, (y - a[1]) / (b[1] - a[1]))
     raise ValueError(f"no shaft at y {y}")
 
 
-def breeching_wrap(sx):
+def breeching_wrap(sx, at=None, half=(0.021, 0.026)):
     """The end of breeching strap ``sx`` buckled round its shaft at
-    ``BREECH_TIE``: a 3 cm leather band round the shaft's 4.2 x 5.2 cm
-    section (the game draws the strap from there to the breeching)."""
+    ``BREECH_TIE`` (or ``at``): a 3 cm leather band round the shaft's
+    section, ``half`` its half width and half height (the sulky's 4.2 x
+    5.2 cm; the game draws the strap from there to the breeching)."""
     import math
 
-    c = shaft_at(sx, BREECH_TIE)
-    hx, hz = 0.021 + 0.003, 0.026 + 0.003
+    c = at or shaft_at(sx, BREECH_TIE)
+    hx, hz = half[0] + 0.003, half[1] + 0.003
     loop = []
     for k in range(24):
         a = 2 * math.pi * k / 24
@@ -98,6 +109,16 @@ def breeching_wrap(sx):
         # A rounded rectangle (a superellipse), hugging the shaft's corners.
         loop.append((c[0] + hx * math.copysign(abs(ca) ** 0.5, ca), c[1], c[2] + hz * math.copysign(abs(sa) ** 0.5, sa)))
     return V.sweep(loop, V.rect(0.005, 0.03, 0.0015), "Leather", (0.4, 0.05), up=(0, 1, 0), caps=False, closed=True)
+
+
+def trace(sx, end):
+    """The trace ``sx`` from the breast collar's end (``H.TRACE``) along the
+    flank, outside the barrel, to ``end`` (where it is hooked)."""
+    a = (H.TRACE[0] * sx, H.TRACE[1], H.TRACE[2])
+    mid = V.lerp(a, end, 0.5)
+    side = ((H.SIDE[0] + H.TRACE_OUT) * sx, mid[1], mid[2] - 0.04)
+    path = V.bezier(a, V.lerp(a, side, 0.6), V.lerp(side, end, 0.4), end, 14)
+    return V.sweep(path, V.rect(0.035, 0.008, 0.002), "Leather", (0.4, 0.05), up=(1, 0, 0))
 
 
 def build():
@@ -251,12 +272,7 @@ def build():
     # fixed on the sulky, a breeching strap went 2.6 cm into the quarters at
     # the gallop. From the bit to the terrets the reins are the harness's.
     for sx in (1.0, -1.0):
-        a = (H.TRACE[0] * sx, H.TRACE[1], H.TRACE[2])
-        b = (0.40 * sx, st - 0.04, 1.0)
-        mid = V.lerp(a, b, 0.5)
-        side = ((H.SIDE[0] + H.TRACE_OUT) * sx, mid[1], mid[2] - 0.04)
-        trace = V.bezier(a, V.lerp(a, side, 0.6), V.lerp(side, b, 0.4), b, 14)
-        m.extend(V.sweep(trace, V.rect(0.035, 0.008, 0.002), leather, (0.4, 0.05), up=(1, 0, 0)))
+        m.extend(trace(sx, (0.40 * sx, st - 0.04, 1.0)))
         m.extend(breeching_wrap(sx))
     v.markers["Seat"] = SEAT
     v.markers["Animal.0"] = (0.0, 0.0, 0.0)
