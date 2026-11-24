@@ -2604,6 +2604,9 @@ pub(crate) mod tests {
         }
         let gallop = RawClip::load(Clip::Gallop).duration;
         assert!((gallop - 1.0).abs() < 1e-4, "{gallop}");
+        // `WALK_PLANT` se mide sobre este ciclo cerrado: 1 s más un cuadro.
+        let walk = RawClip::load(Clip::Walk).duration;
+        assert!((walk - (1.0 + 1.0 / 24.0)).abs() < 1e-4, "{walk}");
     }
 
     /// La rodilla de una mano (entre el antebrazo y la caña) y su menudillo
