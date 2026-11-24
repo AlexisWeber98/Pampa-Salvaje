@@ -45,7 +45,7 @@ straps fit it:
   materials;
 - the materials are renamed after their texture sets (``MATERIALS``); with
   ``--textures DIR`` each source colour map is written to
-  ``DIR/<set>/color.jpg`` with a ``roughness.jpg`` and a ``normal_gl.jpg``
+  ``DIR/<set>/color.jpg`` (halved down to ``MAX_SIZE`` where listed) with a ``roughness.jpg`` and a ``normal_gl.jpg``
   made from it (``maps``), which ``tools/textures_to_ktx2.sh`` turns into
   the KTX2 the game loads.
 
@@ -119,6 +119,9 @@ MATERIALS = {
     "acmat_7": ("Gig_Wood", "gig_wood", 0.78, 4.0, 0.0),  # the body's sides
     "acmat_8": ("Gig_Floor", "gig_floor", 0.8, 4.0, 0.0),  # the step
 }
+# Texture sets written smaller than their source map, at most this many
+# pixels a side: the step's floor comes at 1024 px for a few small faces.
+MAX_SIZE = {"gig_floor": 512}
 
 # Triangles each heavy source mesh keeps (on the body; the shafts' count is
 # both shafts' after bending). The others keep theirs.
@@ -205,6 +208,15 @@ def fittings():
         m.extend(V.rod([side, V.add(hook, (0.0, 0.0, 0.012)), V.add(hook, (0.0, 0.025, 0.0))], 0.006, "Iron", n=6))
         m.extend(S.breeching_wrap(sx, shaft_at(sx, BREECH_TIE), half_section(BREECH_TIE)))
     return m
+
+
+def shrink(rgb, most):
+    """``rgb`` (rows top-down) halved, each pixel the mean of its 2x2
+    block, until no side is over ``most`` pixels."""
+    while max(rgb.shape[:2]) > most:
+        h, w = rgb.shape[0] // 2 * 2, rgb.shape[1] // 2 * 2
+        rgb = rgb[:h, :w].reshape(h // 2, 2, w // 2, 2, -1).mean(axis=(1, 3))
+    return rgb
 
 
 def maps(rgb, roughness, bump):
@@ -430,13 +442,17 @@ if V.bpy is not None:
             img.pixels.foreach_get(px)
             # Blender's rows run bottom-up; the colour stays as stored (sRGB).
             rgb = px.reshape(h, w, 4)[::-1, :, :3].astype(float)
+            if folder in MAX_SIZE:
+                rgb = shrink(rgb, MAX_SIZE[folder])
+                # Slopes are per pixel: fewer pixels, steeper; keep the grooves as deep.
+                bump *= rgb.shape[1] / w
             target = os.path.join(out, folder)
             os.makedirs(target, exist_ok=True)
             roughness, normal = maps(rgb, rough, bump)
             T.save(rgb, os.path.join(target, "color.jpg"), quality=92)
             T.save(roughness, os.path.join(target, "roughness.jpg"), quality=92)
             T.save(normal, os.path.join(target, "normal_gl.jpg"), quality=92)
-            print(f"{folder}: {w}x{h} from {img.name}")
+            print(f"{folder}: {rgb.shape[1]}x{rgb.shape[0]} from {img.name} ({w}x{h})")
 
     def rename_materials(textures):
         """Each source material becomes its game material (by name); for the

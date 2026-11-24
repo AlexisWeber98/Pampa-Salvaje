@@ -9,6 +9,7 @@ along henry, without Blender.
 import math
 import os
 import re
+import struct
 import unittest
 
 import glbtrim
@@ -155,6 +156,18 @@ class Gig(unittest.TestCase):
         band = [p for p in self.mesh("Body_Mesh")["Leather"]
                 if abs(p[1] - c[1]) < 0.02 and math.hypot(p[0] - c[0], p[2] - c[2]) < 0.05]
         self.assertGreater(len(band), 20)
+
+    def test_each_texture_set_ships_at_its_size(self):
+        textures = os.path.join(G.HERE, "..", "assets", "textures", "vehicles")
+        for _, folder, _, _, _ in G.MATERIALS.values():
+            for name in ("color", "normal_gl", "orm"):
+                with open(os.path.join(textures, folder, f"{name}.ktx2"), "rb") as f:
+                    head = f.read(28)
+                # KTX2: 12-byte identifier, vkFormat, typeSize, pixelWidth, pixelHeight.
+                width, height = struct.unpack_from("<II", head, 20)
+                most = G.MAX_SIZE.get(folder)
+                if most:
+                    self.assertEqual((width, height), (most, most), f"{folder}/{name}")
 
 
 if __name__ == "__main__":
