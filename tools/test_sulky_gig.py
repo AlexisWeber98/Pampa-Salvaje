@@ -12,6 +12,8 @@ import re
 import struct
 import unittest
 
+import numpy as np
+
 import glbtrim
 import sulky
 import sulky_gig as G
@@ -157,17 +159,28 @@ class Gig(unittest.TestCase):
                 if abs(p[1] - c[1]) < 0.02 and math.hypot(p[0] - c[0], p[2] - c[2]) < 0.05]
         self.assertGreater(len(band), 20)
 
-    def test_each_texture_set_ships_at_its_size(self):
+    def test_the_shrunk_texture_sets_ship_at_their_max_size(self):
         textures = os.path.join(G.HERE, "..", "assets", "textures", "vehicles")
-        for _, folder, _, _, _ in G.MATERIALS.values():
+        for folder, most in G.MAX_SIZE.items():
             for name in ("color", "normal_gl", "orm"):
                 with open(os.path.join(textures, folder, f"{name}.ktx2"), "rb") as f:
                     head = f.read(28)
                 # KTX2: 12-byte identifier, vkFormat, typeSize, pixelWidth, pixelHeight.
                 width, height = struct.unpack_from("<II", head, 20)
-                most = G.MAX_SIZE.get(folder)
-                if most:
-                    self.assertEqual((width, height), (most, most), f"{folder}/{name}")
+                self.assertEqual((width, height), (most, most), f"{folder}/{name}")
+
+
+class Shrink(unittest.TestCase):
+    def test_it_halves_a_map_into_its_2x2_block_means_down_to_the_size(self):
+        rgb = np.arange(8 * 4 * 3, dtype=float).reshape(8, 4, 3)
+        out = G.shrink(rgb, 2)
+        self.assertEqual(out.shape, (2, 1, 3))
+        np.testing.assert_allclose(out[0, 0], rgb[:4, :4].mean(axis=(0, 1)))
+        np.testing.assert_allclose(out[1, 0], rgb[4:, :4].mean(axis=(0, 1)))
+
+    def test_it_refuses_a_side_it_cannot_halve_evenly(self):
+        with self.assertRaisesRegex(ValueError, "7x4"):
+            G.shrink(np.zeros((7, 4, 3)), 2)
 
 
 if __name__ == "__main__":

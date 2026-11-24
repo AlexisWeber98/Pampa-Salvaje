@@ -212,10 +212,13 @@ def fittings():
 
 def shrink(rgb, most):
     """``rgb`` (rows top-down) halved, each pixel the mean of its 2x2
-    block, until no side is over ``most`` pixels."""
+    block, until no side is over ``most`` pixels. An odd side would lose a
+    row or column (and shift the map against its UVs), so it is refused."""
     while max(rgb.shape[:2]) > most:
-        h, w = rgb.shape[0] // 2 * 2, rgb.shape[1] // 2 * 2
-        rgb = rgb[:h, :w].reshape(h // 2, 2, w // 2, 2, -1).mean(axis=(1, 3))
+        h, w = rgb.shape[:2]
+        if h % 2 or w % 2:
+            raise ValueError(f"cannot halve a {h}x{w} map evenly")
+        rgb = rgb.reshape(h // 2, 2, w // 2, 2, -1).mean(axis=(1, 3))
     return rgb
 
 
