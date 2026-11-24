@@ -70,11 +70,11 @@ CLIPS = (
 # Loops whose last key is one frame short of the cycle: the source stops
 # them a frame before they come back to their first pose, so played on a
 # loop they jump that frame at the seam (the lead fore of `Gallop` pops
-# 21 cm every stride). Each gets a closing key, its first, one frame after its
-# last; `Gallop` becomes 1.000 s. `Walk` misses one too (its planted hooves
-# jump 3 cm) and `Gallop_L`, `Gallop_R` and the swims as well; only the
-# gallop is closed, the one the game plays where it shows.
-CLOSE_LOOPS = ("Gallop",)
+# 21 cm every stride, the planted hooves of `Walk` 3 cm). Each gets a closing
+# key, its first, one frame after its last: `Gallop` becomes 1.000 s and
+# `Walk` 1.042 s. `Gallop_L`, `Gallop_R` and the swims miss one as well and
+# stay open: the game does not play them where it shows.
+CLOSE_LOOPS = ("Gallop", "Walk")
 LOOP_FRAME = 1 / 24
 
 # The bones the placement and the measurements read.

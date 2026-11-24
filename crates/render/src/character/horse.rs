@@ -482,8 +482,8 @@ pub const WALK_FROM_GALLOP: f32 = WALK_PLANT - GALLOP_PLANT;
 pub const GALLOP_PLANT: f32 = 0.656;
 
 /// En qué punto de su ciclo (`0..1`) apoya la mano izquierda en la caminata,
-/// medido igual: en 0.115 s de 1 s.
-pub const WALK_PLANT: f32 = 0.115;
+/// medido igual: en 0.115 s de 1.042 (el ciclo ya cerrado).
+pub const WALK_PLANT: f32 = 0.110;
 
 /// La fracción de su ciclo (`0..1`) en la que empieza un clip de zancada que
 /// toma el relevo de `from` en la fase `phase` de su ciclo.
@@ -2489,10 +2489,10 @@ pub(crate) mod tests {
         assert!(reach > 0.5, "the lead fore reaches {reach} m");
     }
 
-    /// El clip `Gallop` de `horse.glb` tal como está grabado, sin nada de lo
-    /// que el juego le suma: cinemática directa de los nodos del archivo en
-    /// un instante de su ciclo.
-    struct RawGallop {
+    /// Un clip de `horse.glb` tal como está grabado, sin nada de lo que el
+    /// juego le suma: cinemática directa de los nodos del archivo en un
+    /// instante de su ciclo.
+    struct RawClip {
         parents: Vec<Option<usize>>,
         rest: Vec<(Vec3, Quat, Vec3)>,
         names: Vec<String>,
@@ -2502,8 +2502,8 @@ pub(crate) mod tests {
         duration: f32,
     }
 
-    impl RawGallop {
-        fn load() -> Self {
+    impl RawClip {
+        fn load(clip: Clip) -> Self {
             use crate::fauna::livestock::Species;
             use crate::gltf::tests::root;
             use bevy::gltf::gltf::{self, animation::util::ReadOutputs};
@@ -2523,11 +2523,11 @@ pub(crate) mod tests {
             }
             let (mut rotations, mut translations) = (vec![None; n], vec![None; n]);
             let mut duration = 0.0f32;
-            let gallop = file
+            let anim = file
                 .animations()
-                .find(|a| a.name() == Some(Clip::Gallop.name()))
+                .find(|a| a.name() == Some(clip.name()))
                 .unwrap();
-            for channel in gallop.channels() {
+            for channel in anim.channels() {
                 let reader = channel.reader(|_| blob);
                 let times: Vec<f32> = reader.read_inputs().unwrap().collect();
                 duration = duration.max(*times.last().unwrap());
@@ -2585,19 +2585,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_gallop_loop_comes_back_to_its_first_pose_so_no_hoof_pops_at_the_seam() {
+    fn the_walk_and_gallop_loops_come_back_to_their_first_pose_so_no_hoof_pops_at_the_seam() {
         // El último cuadro del ciclo es el primero: un vaso apoyado no salta
-        // al volver a empezar (el original termina un cuadro antes y la mano
-        // de galope saltaba 21 cm en cada tranco).
-        let raw = RawGallop::load();
-        let toes = HorseJoint::TOES.map(HorseJoint::name);
-        let first = raw.at(0.0, toes);
-        let last = raw.at(1.0 - 1e-6, toes);
-        for (leg, (a, b)) in first.iter().zip(last).enumerate() {
-            let jump = a.distance(b) * Species::Horse.scale();
-            assert!(jump < 0.005, "leg {leg} jumps {jump} m at the seam");
+        // al volver a empezar (el original termina un cuadro antes: la mano
+        // de galope saltaba 21 cm en cada tranco y los vasos del paso, 3 cm).
+        for clip in [Clip::Walk, Clip::Gallop] {
+            let raw = RawClip::load(clip);
+            let toes = HorseJoint::TOES.map(HorseJoint::name);
+            let first = raw.at(0.0, toes);
+            let last = raw.at(1.0 - 1e-6, toes);
+            for (leg, (a, b)) in first.iter().zip(last).enumerate() {
+                let jump = a.distance(b) * Species::Horse.scale();
+                assert!(
+                    jump < 0.005,
+                    "{clip:?}: leg {leg} jumps {jump} m at the seam"
+                );
+            }
         }
-        assert!((raw.duration - 1.0).abs() < 1e-4, "{}", raw.duration);
+        let gallop = RawClip::load(Clip::Gallop).duration;
+        assert!((gallop - 1.0).abs() < 1e-4, "{gallop}");
     }
 
     /// La rodilla de una mano (entre el antebrazo y la caña) y su menudillo
@@ -2618,7 +2624,7 @@ pub(crate) mod tests {
         // extremo de su pata) no debe doblar la rodilla ni el menudillo de una
         // mano más allá de como los dobla el propio clip en ese punto de su
         // ciclo.
-        let raw = RawGallop::load();
+        let raw = RawClip::load(Clip::Gallop);
         let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 12.2, 10);
         let carrier = app.world().get::<Children>(me).unwrap()[0];
         for _ in 0..60 {
