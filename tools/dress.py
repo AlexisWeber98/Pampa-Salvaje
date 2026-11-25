@@ -172,10 +172,11 @@ def skin_material(g, i):
     return m
 
 
-def read_body(g, rig):
+def read_body(g, rig, scale=1.0):
     """The body's skin as one mh2gltf Piece (decimetres, welded, dense
     weights in rig order), the joints' rest matrices by name, and each
-    triangle's material index."""
+    triangle's material index. `scale` resizes the body and its joints
+    alike, before anything is fitted to them."""
     doc = g.doc
     nodes = g.items("nodes")
     skinned = [n for n in nodes if "mesh" in n and "skin" in n]
@@ -188,7 +189,7 @@ def read_body(g, rig):
     attrs = prims[0].get("attributes", {})
     if any(p.get("attributes") != attrs or p.get("mode", 4) != 4 for p in prims):
         raise M.ConvertError("body: its primitives must be triangles sharing one vertex layout")
-    pos = g.read(attrs.get("POSITION"), "VEC3", {5126}) / M.METERS
+    pos = g.read(attrs.get("POSITION"), "VEC3", {5126}) * (scale / M.METERS)
     n = len(pos)
     uv = g.read(attrs.get("TEXCOORD_0"), "VEC2", {5126})
     uv[:, 1] = 1.0 - uv[:, 1]  # MakeHuman's V runs up; write() flips it back
@@ -226,6 +227,7 @@ def read_body(g, rig):
         while i in parent:  # the skeleton's root may sit under other nodes
             i = parent[i]
             m = local_matrix(nodes[i]) @ m
+        m[:3, 3] *= scale
         rest[b] = m
     skin_joints = skin.get("joints")
     if not isinstance(skin_joints, list) or not skin_joints:
@@ -277,7 +279,7 @@ def dress_body(args):
         raise M.ConvertError("the .mhm names no skeleton (a 'skeleton' line, e.g. game_engine.mhskel)")
     rig = M.Rig(os.path.join(data, "rigs", os.path.basename(character.skeleton)), M.MAX_ARRAY_ITEMS)
     g = Gltf(args.body)
-    skin, rest, material_of = read_body(g, rig)
+    skin, rest, material_of = read_body(g, rig, args.scale)
     report = []
 
     tile = M.FABRIC_TILE if args.fabrics else M.CLOTH_TILE
@@ -326,6 +328,8 @@ def main(argv=None):
     parser.add_argument("--data", help=f"MakeHuman's data folder, for the skeleton (default: $MAKEHUMAN_DATA, else {M.DEFAULT_DATA})")
     parser.add_argument("--fabrics", metavar="DIR", help="Poly Haven fabrics for the cloth (see mh2gltf --fabrics)")
     parser.add_argument("--max-texture", type=int, default=2048, help="largest side of every texture (default 2048)")
+    parser.add_argument("--scale", type=float, default=1.0,
+                        help="resize the body before dressing it, e.g. 0.938 for 1.81 m to 1.71 m (0.5..1.5, default 1)")
     args = parser.parse_args(argv)
     if np is None:
         parser.error("numpy is required")
@@ -333,6 +337,8 @@ def main(argv=None):
         parser.error("--name must be a plain file name")
     if not 16 <= args.max_texture <= 4096:
         parser.error("--max-texture must be 16..4096")
+    if not 0.5 <= args.scale <= 1.5:
+        parser.error("--scale must be 0.5..1.5")
     try:
         if args.fabrics:
             M.fabric_files(args.fabrics)

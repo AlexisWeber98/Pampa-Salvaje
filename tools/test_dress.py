@@ -89,6 +89,23 @@ class Body(unittest.TestCase):
         self.assertEqual(sorted(set(material.values())), [0, 1])
         self.assertEqual(material[skin.triangles[1]], 1)
 
+    def test_a_scale_shrinks_the_body_and_its_joints_alike(self):
+        skin, rest, _ = dress.read_body(self.body(), Rig(), scale=0.5)
+        np.testing.assert_allclose(skin.coords, [[0, 0, 0], [0, 0.5, 0], [0.5, 0, 0], [0.5, 0.5, 0]], atol=1e-6)
+        np.testing.assert_allclose(rest["spine_01"][:3, 3], [0, 4.25, 0])
+        np.testing.assert_allclose(rest["spine_01"][:3, :3], np.identity(3))
+
+    def test_a_scale_out_of_range_is_refused(self):
+        mhm = os.path.join(self.tmp.name, "a.mhm")
+        with open(mhm, "w") as f:
+            f.write("version v1.1.1\nskeleton game_engine.mhskel\n")
+        for scale in ("0.4", "1.6", "nan"):
+            with self.subTest(scale):
+                err = io.StringIO()
+                with redirect_stderr(err), self.assertRaises(SystemExit):
+                    dress.main(["body.gltf", mhm, "-o", self.tmp.name, "--scale", scale])
+                self.assertIn("--scale must be 0.5..1.5", err.getvalue())
+
     def test_a_bad_body_is_refused(self):
         def fewer_vertices(d):
             # The second triangle's 3, 5, 4 past three vertices.

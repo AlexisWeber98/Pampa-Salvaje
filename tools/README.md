@@ -199,14 +199,16 @@ Una entrada incorrecta recibe un error de una línea. Cualquier otra excepción 
 Viste un cuerpo con skinning, ya puesto en el esqueleto `game_engine` (como el protagonista de Rocketbox, `Sports_Male_01`), con un atuendo de `.mhm` (sus líneas `piece`), usando el mismo código de prendas de `mh2gltf.py`, y escribe el glTF del juego. Necesita Python 3 con numpy, y la carpeta *data* de MakeHuman solo para el orden de los huesos (`rigs/game_engine.mhskel`; `--data`, si no `$MAKEHUMAN_DATA`). Hay que ejecutarlo aislado:
 
 ```sh
-python3 -I tools/dress.py BODY.gltf OUTFIT.mhm -o OUTPUT_FOLDER [--fabrics DIR] [--max-texture N]
+python3 -I tools/dress.py BODY.gltf OUTFIT.mhm -o OUTPUT_FOLDER [--fabrics DIR] [--max-texture N] [--scale S]
 ```
 
-El protagonista se rehace así (cuerpo en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, telas en `~/Downloads/polyhaven/`):
+`--scale S` (0.5 a 1.5, por defecto 1) agranda o achica el cuerpo y sus articulaciones por igual apenas se lee, antes de calzarle las prendas, así que la ropa se ajusta al cuerpo ya escalado. Con 1, la salida es la misma que sin la opción, byte por byte.
+
+El protagonista se rehace así (cuerpo en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, telas en `~/Downloads/polyhaven/`). El cuerpo de Rocketbox mide 1,81 m; `--scale 0.938` lo deja en 1,71 m (la articulación de la cabeza baja de 1,606 a 1,507 m, ver `measure.py`):
 
 ```sh
 python3 -I tools/dress.py ~/Documents/pampa-prototipos/protagonista_rocketbox/protagonista.gltf \
-    assets/characters/protagonist/protagonist.mhm -o assets/characters/protagonist --fabrics ~/Downloads/polyhaven
+    assets/characters/protagonist/protagonist.mhm -o assets/characters/protagonist --fabrics ~/Downloads/polyhaven --scale 0.938
 python3 -I tools/mh2gltf.py --check assets/characters/protagonist/model.gltf
 ```
 
