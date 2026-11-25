@@ -22,7 +22,8 @@ use super::model::{
     dress_character, load_character_models, swap_in_character_models, toggle_character_models,
 };
 use super::rider::{
-    OnBench, Riding, carry_stirrups, pose_riders, seat_riders, seat_transform, spawn_riders,
+    OnBench, Riding, carry_stirrups, pose_riders, seat_pillions, seat_riders, seat_transform,
+    spawn_riders,
 };
 use super::rig::{drive_rigs, fit_rigs};
 use super::tack::{PendingTack, TackBuilt, dress_pending, dress_tack, load_recado, stretch_straps};
@@ -114,6 +115,7 @@ impl Plugin for CharacterVisualPlugin {
                     swap_in_horses,
                     dress_pending,
                     spawn_riders,
+                    seat_pillions,
                     seat_riders,
                     read_reference,
                 )

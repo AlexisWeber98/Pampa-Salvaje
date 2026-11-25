@@ -1697,6 +1697,11 @@ pub struct Tack {
     pub torso_rest: Affine3A,
     /// El centro de las argollas del freno, en la cabeza.
     pub bit: Vec3,
+    /// El hueso de la grupa ([`HorseJoint::Croup`]), del que cuelga quien va
+    /// en ancas, y su ubicación de reposo (marco del cuerpo); el torso en un
+    /// modelo sin él.
+    pub croup: Entity,
+    pub croup_rest: Affine3A,
 }
 
 /// Los huesos de los que cuelgan los aperos y el jinete.
@@ -1972,6 +1977,8 @@ pub struct HorseTack {
     pub kit: TackKit,
     pub local: LocalFittings,
     pub torso: Affine3A,
+    /// El reposo de la grupa ([`Tack::croup_rest`]).
+    pub croup: Affine3A,
     /// El caballo en reposo sobre el que se ajustaron (para medirlos).
     pub rest: TackRest,
 }
@@ -2084,6 +2091,16 @@ fn build_tack(
     let bones = [
         bones[0]?, bones[1]?, bones[2]?, bones[3]?, bones[4]?, bones[5]?,
     ];
+    let croup = scene
+        .children
+        .iter_descendants(root)
+        .find(|e| {
+            scene
+                .names
+                .get(*e)
+                .is_ok_and(|n| n.as_str() == HorseJoint::Croup.name())
+        })
+        .map_or(bones[0], posed);
     let inverse: Vec<Mat4> = rest.iter().map(|r| Mat4::from(r.inverse())).collect();
     let paints = tack_paints(stores);
     let modelled = recado.into_iter().flat_map(|r| r.pieces);
@@ -2124,6 +2141,7 @@ fn build_tack(
     Some(HorseTack {
         local: local_fittings(&kit.fittings, bones),
         torso: bones[0],
+        croup,
         kit,
         rest: measured,
     })
@@ -2229,6 +2247,12 @@ fn dress(
             .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == b.name()))
     };
     let bones = TACK_BONES.map(bone);
+    let croup = scene.children.iter_descendants(root).find(|e| {
+        scene
+            .names
+            .get(*e)
+            .is_ok_and(|n| n.as_str() == HorseJoint::Croup.name())
+    });
     for &child in scene.children.get(carrier).into_iter().flatten() {
         if pieces.contains(child) {
             commands.entity(child).try_despawn();
@@ -2259,18 +2283,27 @@ fn dress(
         commands.entity(carrier).try_remove::<Tack>();
         return;
     };
-    put_on_tack(commands, tack, carrier, &skin, [t, n0, n1, n2, w, h]);
+    put_on_tack(
+        commands,
+        tack,
+        carrier,
+        &skin,
+        [t, n0, n1, n2, w, h],
+        croup.unwrap_or(t),
+    );
 }
 
 /// Pone los aperos compartidos en el caballo `carrier`: las carcasas con
 /// skinning en las articulaciones de su `skin`, los estribos colgando del torso
-/// y las correas (sus huesos `bones`, en el orden de [`TACK_BONES`]).
+/// y las correas (sus huesos `bones`, en el orden de [`TACK_BONES`]); la grupa
+/// `croup` queda en el [`Tack`] para quien va en ancas.
 fn put_on_tack(
     commands: &mut Commands,
     tack: &HorseTack,
     carrier: Entity,
     skin: &SkinnedMesh,
     bones: [Entity; 6],
+    croup: Entity,
 ) {
     let range = model_range();
     let kit = &tack.kit;
@@ -2377,6 +2410,8 @@ fn put_on_tack(
         seat: tack.kit.fittings.seat,
         torso_rest: tack.torso,
         bit: (local.bit[0] + local.bit[1]) / 2.0,
+        croup,
+        croup_rest: tack.croup,
     });
 }
 

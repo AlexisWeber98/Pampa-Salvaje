@@ -47,7 +47,7 @@ use super::clips::{
 };
 use super::figure::{FigureBody, FigureKind};
 use super::model::model_transform;
-use super::rider::{OnBench, Riding, Rising, rise_of};
+use super::rider::{Behind, OnBench, Riding, Rising, rise_of};
 use super::townsfolk::{SKIRT_ARMS_OUT, arm_out};
 use super::visual::VisualPose;
 use crate::fauna::livestock::{any_in_view, frozen, view_eye};
@@ -294,6 +294,7 @@ type ModelRig = (
     &'static mut Transform,
     Option<&'static Riding>,
     Option<&'static OnBench>,
+    Has<Behind>,
 );
 
 /// Quién es un modelo y qué reproduce: a pie, el tipo y la semilla de su
@@ -317,11 +318,13 @@ fn who(
 }
 
 /// El clip de un modelo sentado: en un banco, el de lo que hace ahí
-/// ([`bench_clip`]); [`SEATED`] con las riendas; ninguno a pie.
-fn seated_clip(riding: bool, bench: Option<&OnBench>) -> Option<Clip> {
+/// ([`bench_clip`]); en ancas ([`Behind`]), [`AT_REST`], con las manos en el
+/// regazo; [`SEATED`] con las riendas; ninguno a pie.
+fn seated_clip(riding: bool, bench: Option<&OnBench>, behind: bool) -> Option<Clip> {
     match (riding, bench) {
         (false, _) => None,
         (true, Some(b)) => Some(bench_clip(b.0)),
+        (true, None) if behind => Some(AT_REST),
         (true, None) => Some(SEATED),
     }
 }
@@ -345,9 +348,9 @@ pub(super) fn drive_rigs(
 ) {
     let dt = time.delta_secs();
     let eye = view_eye(cameras);
-    for (child_of, mut rig, at, mut transform, riding, bench) in &mut rigs {
+    for (child_of, mut rig, at, mut transform, riding, bench, behind) in &mut rigs {
         let on_bench = bench.is_some();
-        let seated = seated_clip(riding.is_some(), bench);
+        let seated = seated_clip(riding.is_some(), bench, behind);
         let figure = bodies
             .get(child_of.parent())
             .ok()
@@ -525,15 +528,19 @@ mod tests {
             (Smoke, Clip::SitSmoke),
             (Drink, Clip::SitDrink),
         ] {
-            assert_eq!(seated_clip(true, Some(&OnBench(pastime))), Some(clip));
+            assert_eq!(
+                seated_clip(true, Some(&OnBench(pastime)), false),
+                Some(clip)
+            );
             assert_eq!(played(Some(clip)), &[clip, Clip::Idle]);
             let half = rising_targets(clip, 0.5);
             assert_eq!((half[clip.index()], half[Clip::Idle.index()]), (0.5, 0.5));
             assert_eq!(half.iter().sum::<f32>(), 1.0, "{pastime:?}");
         }
         // Con las riendas, el clip de montar; a pie, ninguno.
-        assert_eq!(seated_clip(true, None), Some(SEATED));
-        assert_eq!(seated_clip(false, Some(&OnBench(Cards))), None);
+        assert_eq!(seated_clip(true, None, false), Some(SEATED));
+        assert_eq!(seated_clip(true, None, true), Some(AT_REST));
+        assert_eq!(seated_clip(false, Some(&OnBench(Cards)), false), None);
     }
 
     #[test]

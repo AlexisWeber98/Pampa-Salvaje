@@ -39,7 +39,8 @@
 //! andar, el jugador se baja del tren (si viaja en él) y monta en ese punto del
 //! suelo, mirando hacia ese rumbo (0 al este, 90 al norte); `@X,Y,GRADOS,PELAJE`
 //! (`bayo`, `zaino`, `tordillo`, `overo` o `alazan`) monta un caballo de ese
-//! pelaje. Una captura a
+//! pelaje. Con `PAMPA_SHOTS_PILLION` definida, al montar sube además a
+//! Bairoletto en ancas ([`Pillion`](pampa_render::Pillion)). Una captura a
 //! caballo no espera a que el streaming se asiente: se guarda a los
 //! `PAMPA_SHOTS_WAIT` frames, así que con una espera corta varias líneas
 //! seguidas son una ráfaga:
@@ -218,6 +219,7 @@ impl ShotsPlugin {
             requested: false,
             jumped: None,
             mounted: None,
+            pillion: std::env::var_os("PAMPA_SHOTS_PILLION").is_some(),
         })
     }
 }
@@ -244,6 +246,8 @@ pub struct Tour {
     jumped: Option<usize>,
     /// La captura a caballo en la que ya se montó al jugador.
     mounted: Option<usize>,
+    /// Si al montar sube a Bairoletto en ancas (`PAMPA_SHOTS_PILLION`).
+    pillion: bool,
 }
 
 impl Plugin for Tour {
@@ -269,6 +273,7 @@ impl Plugin for Tour {
             requested: false,
             jumped: None,
             mounted: None,
+            pillion: self.pillion,
         })
         .add_systems(
             Update,
@@ -360,6 +365,11 @@ fn ride_shot(
             .entity(me)
             .remove::<OnTrain>()
             .insert((Visibility::Inherited, visual));
+        if tour.pillion && ride.gait != Gait::Tied {
+            commands
+                .entity(me)
+                .insert(pampa_render::Pillion(pampa_render::FigureKind::Bairoletto));
+        }
     }
     if matches!(ride.gait, Gait::Stop | Gait::Tied) {
         keys.release(KeyCode::KeyW);
