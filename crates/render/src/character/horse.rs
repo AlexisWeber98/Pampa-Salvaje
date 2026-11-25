@@ -30,6 +30,12 @@
 //! [`stepping_speed`]. Un caballo atado cambia de espera de vez en cuando, como
 //! los caballos de corral; uno montado se queda quieto.
 //!
+//! Un caballo al que se le pide ([`HorseBuck`]) corcovea una vez en el lugar
+//! con uno de [`Clip::BUCKS`], entero y al ritmo con que se grabó, y vuelve a
+//! lo que hacía; lo usará el amansado del Acto 8. Mientras corcovea,
+//! [`ground_horses`] le deja mover la raíz: `Buck_2` retrocede unos 2 m del
+//! modelo y vuelve a avanzar hasta donde empezó.
+//!
 //! El salto encadena tres clips (S3 de `odd/tasks/henry-horse.md`). En el aire
 //! ([`VisualPose::flight`](super::VisualPose)) se ve el despegue y la subida
 //! de `Jump`, fundidos en lo alto en la bajada y el apoyo de `S.Jump`, el
@@ -343,8 +349,8 @@ pub const GALLOP_LENGTH: f32 = 1.0;
 pub const TIED_IDLES: [Clip; 3] = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
 
 /// Los clips que reproduce un caballo ensillado: los de [`Clip::ALL`], el
-/// salto corto y el aterrizaje al galope.
-pub const HORSE_CLIPS: [Clip; CLIP_COUNT + 2] = [
+/// salto corto, el aterrizaje al galope y los corcovos.
+pub const HORSE_CLIPS: [Clip; CLIP_COUNT + 5] = [
     Clip::Idle,
     Clip::Idle2,
     Clip::IdleHeadlow,
@@ -354,7 +360,17 @@ pub const HORSE_CLIPS: [Clip; CLIP_COUNT + 2] = [
     Clip::GallopJump,
     Clip::ShortJump,
     Clip::JumpRun,
+    Clip::Buck,
+    Clip::Buck2,
+    Clip::Buck3,
 ];
+
+/// Le pide al caballo de una entidad de personaje (la del [`VisualPose`]) que
+/// corcovee una vez, en el lugar, con uno de [`Clip::BUCKS`]:
+/// [`drive_horses`] lo reproduce entero, quita el pedido y el caballo vuelve
+/// a lo que hacía. En el aire, el pedido se descarta.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HorseBuck(pub Clip);
 
 /// Los huesos con los que [`ground_horses`] baja al caballo en el aire y le
 /// quita el movimiento de raíz ([`HorseJoint`]), en la raíz de su modelo.
@@ -442,8 +458,9 @@ pub struct HorseRig {
     pub lead: Clip,
     /// Qué tan avanzado está el vuelo de un salto (`0..=1`), nada en el suelo.
     pub flight: Option<f32>,
-    /// El aterrizaje que se reproduce después de un salto ([`landing`]) y en
-    /// qué segundo de su clip va; nada fuera de uno.
+    /// El clip de una sola vez que se reproduce entero, el aterrizaje después
+    /// de un salto ([`landing`]) o un corcovo ([`HorseBuck`]), y en qué
+    /// segundo de su clip va; nada fuera de uno.
     pub landing: Option<(Clip, f32)>,
     /// Cuántas veces más largo que el del clip es ahora el tranco de su
     /// caminata ([`walk_stride`]).
@@ -834,8 +851,13 @@ pub(super) fn ground_horses(
         let Ok(mut bone) = transforms.get_mut(joints.root) else {
             continue;
         };
-        bone.translation.x = joints.root_rest.x;
-        bone.translation.z = joints.root_rest.z;
+        // Un corcovo se mueve en el lugar con su propia raíz (`Buck_2`
+        // retrocede y vuelve a avanzar hasta donde empezó).
+        let bucking = rig.landing.is_some_and(|(c, _)| Clip::BUCKS.contains(&c));
+        if !bucking {
+            bone.translation.x = joints.root_rest.x;
+            bone.translation.z = joints.root_rest.z;
+        }
         let mut toes = [0.0; 4];
         if rig.flight.is_some() {
             let reader = transforms.as_readonly();
@@ -936,6 +958,7 @@ pub(super) fn drive_horses(
     loaded: Option<Res<Assets<AnimationClip>>>,
     cameras: Query<(Entity, &GlobalTransform, &Camera), With<Camera3d>>,
     poses: Query<&VisualPose>,
+    bucks: Query<&HorseBuck>,
     mut bodies: Query<(&ChildOf, &mut HorseBody, &mut Transform)>,
     mut rigs: Query<(&ChildOf, &mut HorseRig, &GlobalTransform)>,
     mut players: Query<&mut AnimationPlayer>,
@@ -1026,6 +1049,9 @@ pub(super) fn drive_horses(
         // cuadro, donde termina `Jump_Run`, o la espera.
         let air = flight.map(jump_frame);
         let mut shown = None;
+        if bucks.contains(parent.parent()) {
+            commands.entity(parent.parent()).try_remove::<HorseBuck>();
+        }
         if air.is_some() {
             rig.landing = None;
         } else {
@@ -1033,6 +1059,9 @@ pub(super) fn drive_horses(
                 // Recién aterrizado (también de un vuelo cortado).
                 let land = landing(speed);
                 rig.landing = Some((land, landing_from(land)));
+            }
+            if let Ok(HorseBuck(buck)) = bucks.get(parent.parent()) {
+                rig.landing = Some((*buck, 0.0));
             }
             if let Some((clip, at)) = rig.landing {
                 let rate = match clip {
@@ -1104,7 +1133,15 @@ pub(super) fn drive_horses(
                 continue;
             };
             active.set_weight(rig.weights[clip.index()]);
-            if matches!(clip, Clip::GallopJump | Clip::JumpRun | Clip::ShortJump) {
+            if matches!(
+                clip,
+                Clip::GallopJump
+                    | Clip::JumpRun
+                    | Clip::ShortJump
+                    | Clip::Buck
+                    | Clip::Buck2
+                    | Clip::Buck3
+            ) {
                 // Nunca se reproducen con el reloj (así que nunca hacen
                 // bucle): se fijan en su punto, y se dejan ahí mientras se
                 // desvanecen.
@@ -1568,6 +1605,80 @@ pub(crate) mod tests {
             assert!(hind.x < 0.0 && hind.length() < 0.9, "folded: {hind}");
             assert!(toes[leg] > standing + 0.15, "folded up: {toes:?}");
         }
+    }
+
+    #[test]
+    fn a_horse_asked_to_buck_plays_the_whole_buck_once_and_stands_again() {
+        let (mut app, me) = saddled(CharacterVisual::Horse(Coat::Bayo), 0.0);
+        let node = app
+            .world()
+            .resource::<LivestockModels>()
+            .get(Species::Horse)
+            .unwrap()
+            .nodes[Clip::Buck2.index()];
+        app.world_mut()
+            .entity_mut(me)
+            .insert(HorseBuck(Clip::Buck2));
+        ride(&mut app, me, 0.0);
+        assert!(
+            app.world().get::<HorseBuck>(me).is_none(),
+            "the ask is taken"
+        );
+        let rig = |app: &mut App| {
+            let world = app.world_mut();
+            world
+                .query::<&HorseRig>()
+                .iter(world)
+                .find(|r| r.started)
+                .unwrap()
+                .clone()
+        };
+        let length = rig(&mut app).durations[Clip::Buck2.index()];
+        assert!((length - 4.792).abs() < 0.01, "Buck_2 lasts {length}");
+        let root = |app: &mut App| {
+            let world = app.world_mut();
+            let joints = *world.query::<&HorseJoints>().single(world).unwrap();
+            let at = world.get::<Transform>(joints.root).unwrap().translation;
+            (at, joints.root_rest)
+        };
+        let mut frames = 1;
+        let mut peak: f32 = 0.0;
+        let (mut back, mut ahead): (f32, f32) = (0.0, 0.0);
+        while let Some((clip, at)) = rig(&mut app).landing {
+            // Retrocede y vuelve a avanzar con su raíz.
+            let (now, rest) = root(&mut app);
+            back = back.min(now.z - rest.z);
+            ahead = ahead.max(now.z - rest.z);
+            assert_eq!(clip, Clip::Buck2);
+            // Fijado en su punto, nunca con el reloj.
+            let player = rig(&mut app).player;
+            let player = app.world().get::<AnimationPlayer>(player);
+            let active = player.unwrap().animation(node).unwrap();
+            assert!((active.seek_time() - at).abs() < 1e-3, "{at}");
+            assert_eq!(active.speed(), 0.0);
+            peak = peak.max(rig(&mut app).weights[Clip::Buck2.index()]);
+            assert!(frames < 200, "the buck never ends");
+            ride(&mut app, me, 0.0);
+            frames += 1;
+        }
+        // Entero, al ritmo con que se grabó (frames de 50 ms).
+        let played = frames as f32 * 0.05;
+        assert!((played - length).abs() < 0.1, "{played} s of {length}");
+        assert!(peak > 0.99, "{peak}");
+        assert!(back < -1.5 && ahead > 1.2, "{back} {ahead}");
+        for _ in 0..30 {
+            ride(&mut app, me, 0.0);
+        }
+        let weights = rig(&mut app).weights;
+        assert!(
+            Clip::BUCKS.iter().all(|b| weights[b.index()] < 0.05),
+            "{weights:?}"
+        );
+        let standing: f32 = weights[..CLIP_COUNT].iter().sum();
+        assert!(standing > 0.95, "{weights:?}");
+        // De vuelta en su lugar.
+        let (now, rest) = root(&mut app);
+        assert_eq!((now.x, now.z), (rest.x, rest.z));
     }
 
     #[test]

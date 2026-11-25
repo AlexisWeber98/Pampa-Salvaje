@@ -844,6 +844,7 @@ abierta el juego no recibe ninguna tecla.
 | `goto gato` / `puma` / `yaguarete` | Ponerse a 15 m del felino de esa especie más cercano, mirándolo (a pie o a caballo, como estaba): está dentro de su alarma, así que se lo ve arrancar a huir |
 | `goto X Y` | Ir a un punto, en metros del juego |
 | `horse` | Poner un caballo ensillado junto al jugador (montable una vez desbloqueada la monta) |
+| `buck` / `buck 2` / `buck 3` | El caballo ensillado sin jinete más cercano (a hasta 30 m) corcovea una vez, en el lugar, con `Buck_1`, `Buck_2` o `Buck_3`: los corcovos que usará el amansado del Acto 8 |
 | `turbo on` / `turbo off` | Dejar que el caballo del jugador galope a hasta 70 km/h, para recorrer el mapa rápido, o volver a lo normal |
 | `unlock all` | Desbloquear todas las habilidades (y todo el mapa del juego en el minimapa ampliado) |
 | `money N` | Sumar N pesos a la plata del jugador, con centavos si hacen falta (`money 2,50`), para probar las compras |

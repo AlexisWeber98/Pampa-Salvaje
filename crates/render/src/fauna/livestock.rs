@@ -329,8 +329,9 @@ pub const HORSE_WITHERS: f32 = 1.60;
 /// Los clips del caballo de henrysteve973, en el orden de su archivo
 /// (`CLIPS` en `tools/henry_horse.py`, ver `henry/README.md`): los siete
 /// primeros en los lugares de [`Clip::ALL`]; del resto, el juego reproduce el
-/// salto corto ([`Clip::ShortJump`]) y el aterrizaje al galope
-/// ([`Clip::JumpRun`]). Los demás se cargan solo si algún día se usan.
+/// salto corto ([`Clip::ShortJump`]), el aterrizaje al galope
+/// ([`Clip::JumpRun`]) y los corcovos ([`Clip::BUCKS`]). Los demás se cargan
+/// solo si algún día se usan.
 pub const HENRY_CLIPS: [&str; 28] = [
     "Idle_1",
     "Idle_2",
@@ -637,7 +638,10 @@ impl Species {
                 | Clip::GallopJump
                 | Clip::FenceLeap
                 | Clip::ShortJump
-                | Clip::JumpRun => 4,
+                | Clip::JumpRun
+                | Clip::Buck
+                | Clip::Buck2
+                | Clip::Buck3 => 4,
             };
         }
         if self.bird() {
@@ -648,7 +652,10 @@ impl Species {
                 | Clip::GallopJump
                 | Clip::FenceLeap
                 | Clip::ShortJump
-                | Clip::JumpRun => 1,
+                | Clip::JumpRun
+                | Clip::Buck
+                | Clip::Buck2
+                | Clip::Buck3 => 1,
                 Clip::BankLeft => 2,
                 Clip::BankRight => 3,
             };
@@ -657,6 +664,9 @@ impl Species {
             return match clip {
                 Clip::JumpRun => 8,
                 Clip::ShortJump => 9,
+                Clip::Buck => 17,
+                Clip::Buck2 => 18,
+                Clip::Buck3 => 19,
                 // Las esperas, el comer, la caminata, el galope y el salto
                 // ocupan los primeros siete lugares; los clips que nunca pide,
                 // el del salto.
@@ -827,6 +837,14 @@ pub enum Clip {
     /// (`Jump_Run`): se reproduce desde el apoyo de las manos y termina en el
     /// primer cuadro del galope. Solo lo trae el caballo.
     JumpRun,
+    /// Los corcovos del caballo (`Buck_1`, `Buck_2` y `Buck_3`), en el lugar:
+    /// los reproduce una vez un caballo al que se le pide ([`HorseBuck`]),
+    /// para amansar. Solo los trae el caballo.
+    ///
+    /// [`HorseBuck`]: crate::character::HorseBuck
+    Buck,
+    Buck2,
+    Buck3,
 }
 
 /// Cuántos clips contienen todos los modelos de ganado (la longitud de
@@ -834,7 +852,7 @@ pub enum Clip {
 pub const CLIP_COUNT: usize = 7;
 
 /// Cuántos clips se cargan de cada modelo (la longitud de [`Clip::LOADED`]).
-pub const LOADED_COUNT: usize = CLIP_COUNT + 5;
+pub const LOADED_COUNT: usize = CLIP_COUNT + 8;
 
 impl Clip {
     pub const ALL: [Self; CLIP_COUNT] = [
@@ -849,7 +867,7 @@ impl Clip {
 
     /// Los que se cargan de cada modelo, en el orden de sus nodos en el grafo
     /// ([`SpeciesModel::nodes`]): [`Clip::ALL`], el salto de un alambrado y
-    /// los giros de las rapaces.
+    /// los giros de las rapaces, los saltos del caballo y sus corcovos.
     pub const LOADED: [Self; LOADED_COUNT] = [
         Self::Idle,
         Self::Idle2,
@@ -863,7 +881,13 @@ impl Clip {
         Self::BankRight,
         Self::ShortJump,
         Self::JumpRun,
+        Self::Buck,
+        Self::Buck2,
+        Self::Buck3,
     ];
+
+    /// Los corcovos del caballo, en orden.
+    pub const BUCKS: [Self; 3] = [Self::Buck, Self::Buck2, Self::Buck3];
 
     /// El nombre del clip en el archivo glTF.
     pub fn name(self) -> &'static str {
@@ -880,6 +904,9 @@ impl Clip {
             Self::BankRight => "Bank_R",
             Self::ShortJump => "S_Jump",
             Self::JumpRun => "Jump_Run",
+            Self::Buck => "Buck_1",
+            Self::Buck2 => "Buck_2",
+            Self::Buck3 => "Buck_3",
         }
     }
 
@@ -1784,6 +1811,10 @@ mod tests {
             (Clip::GallopJump, "Jump"),
             (Clip::ShortJump, "S_Jump"),
             (Clip::JumpRun, "Jump_Run"),
+            // Los corcovos, para amansar.
+            (Clip::Buck, "Buck_1"),
+            (Clip::Buck2, "Buck_2"),
+            (Clip::Buck3, "Buck_3"),
             // Nunca los pide: el salto en su lugar.
             (Clip::FenceLeap, "Jump"),
             (Clip::BankLeft, "Jump"),
@@ -1800,6 +1831,7 @@ mod tests {
             let jump = other.animation(Clip::GallopJump);
             assert_eq!(other.animation(Clip::JumpRun), jump, "{other:?}");
             assert_eq!(other.animation(Clip::ShortJump), jump, "{other:?}");
+            assert_eq!(other.animation(Clip::Buck3), jump, "{other:?}");
         }
     }
 
