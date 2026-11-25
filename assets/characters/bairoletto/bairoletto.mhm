@@ -19,7 +19,7 @@ modifier macrodetails/Asian 0.000000
 modifier macrodetails/Caucasian 1.000000
 modifier macrodetails-universal/Muscle 0.400000
 modifier macrodetails-universal/Weight 0.200000
-modifier macrodetails-height/Height 0.420000
+modifier macrodetails-height/Height 0.279000
 modifier macrodetails-proportions/BodyProportions 0.500000
 skeleton game_engine.mhskel
 skinMaterial skins/young_caucasian_male/young_caucasian_male2.mhmat

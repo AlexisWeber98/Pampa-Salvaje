@@ -16,7 +16,7 @@ modifier macrodetails/Asian 0.000000
 modifier macrodetails/Caucasian 1.000000
 modifier macrodetails-universal/Muscle 0.400000
 modifier macrodetails-universal/Weight 0.400000
-modifier macrodetails-height/Height 0.480000
+modifier macrodetails-height/Height 0.337000
 modifier macrodetails-proportions/BodyProportions 0.600000
 skeleton game_engine.mhskel
 skinMaterial skins/young_caucasian_female/young_caucasian_female.mhmat

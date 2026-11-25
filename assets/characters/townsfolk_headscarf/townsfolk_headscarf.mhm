@@ -18,7 +18,7 @@ modifier macrodetails/Asian 0.000000
 modifier macrodetails/Caucasian 1.000000
 modifier macrodetails-universal/Muscle 0.450000
 modifier macrodetails-universal/Weight 0.650000
-modifier macrodetails-height/Height 0.350000
+modifier macrodetails-height/Height 0.275000
 modifier macrodetails-proportions/BodyProportions 0.500000
 skeleton game_engine.mhskel
 skinMaterial skins/middleage_caucasian_female/middleage_caucasian_female.mhmat
