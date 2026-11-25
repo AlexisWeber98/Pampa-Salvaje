@@ -257,9 +257,16 @@ mod tests {
         };
         let idle = animated(Clip::Idle);
         for clip in HORSE_CLIPS {
-            // Ninguno mueve más que los huesos de las esperas (el único con
-            // movimiento de raíz, `Jump_Land`, no se reproduce).
-            assert_eq!(animated(clip), idle, "{clip:?}");
+            // Ninguno mueve más que los huesos de las esperas (de los que
+            // tienen movimiento de raíz, `Jump_Land` no se reproduce, y
+            // `Buck_2` va y viene a lo largo del cuerpo y termina donde
+            // empezó: `ground_horses` se lo deja mover solo mientras
+            // corcovea).
+            let mut moved = animated(clip);
+            if clip == Clip::Buck2 {
+                assert!(moved.remove(&(HorseJoint::Root.name().to_string(), "translation")));
+            }
+            assert_eq!(moved, idle, "{clip:?}");
         }
         // Los huesos que gira este módulo los fija cada clip en cada frame: si
         // no, sus giros se acumularían frame a frame.

@@ -19,6 +19,9 @@
 //!   estaba);
 //! - `goto X Y`: un punto, en metros del juego;
 //! - `horse`: un caballo ensillado junto al jugador;
+//! - `buck` / `buck 2` / `buck 3`: el caballo ensillado sin jinete más cercano
+//!   (a hasta [`BUCK_RANGE`] metros) corcovea una vez con `Buck_1`, `Buck_2` o
+//!   `Buck_3` ([`HorseBuck`]), el corcovo que usará el amansado;
 //! - `turbo on` / `turbo off`: el caballo del jugador galopa a hasta
 //!   [`TURBO_KMH`] (y llega rápido a esa velocidad), o vuelve a su galope
 //!   normal;
@@ -54,6 +57,8 @@ use pampa_core::{
     Circle, CritterKind, FaunaSite, Heading, Rider, RiderParams, SettlementKind, SettlementLayout,
     TetheredHorse, TimeOfDay, TownLayout, Travel, Vec2 as GroundVec2, World,
 };
+use pampa_render::character::HorseBuck;
+use pampa_render::fauna::livestock::Clip;
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::{
     CharacterModelsShown, CharacterVisual, Coat, StreamFocus, Typefaces, VisualPose, WorldClock,
@@ -77,13 +82,17 @@ const TURBO_ACCELERATION: f32 = 10.0;
 /// en metros.
 const SEARCH: f32 = 300.0;
 
+/// Hasta qué distancia del jugador, en metros, `buck` busca un caballo.
+pub const BUCK_RANGE: f32 = 30.0;
+
 /// Lo que la consola enumera con `help`.
-pub const HELP: [&str; 14] = [
+pub const HELP: [&str; 15] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
     "goto gato, puma, yaguarete: face the nearest",
     "goto X Y: a point in meters",
     "horse: a saddled horse alongside",
+    "buck, buck 2, buck 3: the nearest horse bucks",
     "fauna: the animals nearby",
     "unlock all: every ability",
     "money N: N more pesos, as in money 2,50",
@@ -107,6 +116,9 @@ pub fn is_toggle(keys: &ButtonInput<KeyCode>) -> bool {
 pub enum Command {
     Goto(Destination),
     Horse,
+    /// El caballo ensillado más cercano corcovea con este clip, uno de
+    /// [`Clip::BUCKS`].
+    Buck(Clip),
     /// Cuenta los animales alrededor del jugador.
     Fauna,
     UnlockAll,
@@ -170,6 +182,11 @@ pub fn parse(line: &str) -> Result<Command, String> {
     match words.as_slice() {
         ["help"] => Ok(Command::Help),
         ["horse"] => Ok(Command::Horse),
+        ["buck"] => Ok(Command::Buck(Clip::Buck)),
+        ["buck", "1"] => Ok(Command::Buck(Clip::Buck)),
+        ["buck", "2"] => Ok(Command::Buck(Clip::Buck2)),
+        ["buck", "3"] => Ok(Command::Buck(Clip::Buck3)),
+        ["buck", ..] => Err("usage: buck, buck 2, buck 3".into()),
         ["fauna"] => Ok(Command::Fauna),
         ["unlock", "all"] => Ok(Command::UnlockAll),
         ["models", "on"] => Ok(Command::Models(true)),
@@ -576,6 +593,7 @@ fn run_entered(
         Option<ResMut<PlayerTuning>>,
     ),
     (fauna, (site, flora), (mut view, mut free)): Watched,
+    saddled: Query<(Entity, &Mountable, &CharacterVisual)>,
 ) {
     // Solo se toca cuando hay líneas para ejecutar: un cambio en cada frame
     // volvería a rotular el panel en cada frame, eliminando sus líneas antes de
@@ -783,6 +801,21 @@ fn run_entered(
                 }
                 None => console.print("no room for a horse"),
             },
+            Command::Buck(clip) => {
+                let near = saddled
+                    .iter()
+                    .filter(|(_, _, visual)| matches!(visual, CharacterVisual::Horse(_)))
+                    .map(|(horse, at, _)| (horse, at.0.position.distance(rider.position)))
+                    .filter(|(_, distance)| *distance <= BUCK_RANGE)
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                match near {
+                    Some((horse, _)) => {
+                        commands.entity(horse).insert(HorseBuck(clip));
+                        console.print(format!("the horse bucks: {}", clip.name()));
+                    }
+                    None => console.print("no saddled horse near: type horse"),
+                }
+            }
         }
     }
 }
@@ -881,6 +914,11 @@ mod tests {
         assert_eq!(parse("models off"), Ok(Command::Models(false)));
         assert!(parse("models").unwrap_err().contains("usage"));
         assert_eq!(parse("  Horse "), Ok(Command::Horse));
+        assert_eq!(parse("buck"), Ok(Command::Buck(Clip::Buck)));
+        assert_eq!(parse("buck 1"), Ok(Command::Buck(Clip::Buck)));
+        assert_eq!(parse("Buck 2"), Ok(Command::Buck(Clip::Buck2)));
+        assert_eq!(parse("buck 3"), Ok(Command::Buck(Clip::Buck3)));
+        assert!(parse("buck 4").unwrap_err().contains("usage"));
         assert_eq!(parse("fauna"), Ok(Command::Fauna));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
         assert_eq!(
@@ -1001,6 +1039,9 @@ mod tests {
             "turbo off: normal gallop".into(),
             "no horse tuning".into(),
             "no room for a horse".into(),
+            parse("buck 4").unwrap_err(),
+            "the horse bucks: Buck_3".into(),
+            "no saddled horse near: type horse".into(),
             "no clear ground there".into(),
             parse("models").unwrap_err(),
             "models on: MakeHuman people".into(),
@@ -1399,6 +1440,34 @@ mod tests {
         let me = rider(&mut app);
         assert_eq!(me.travel(), Travel::Riding);
         assert_eq!(me.position, horse.position);
+    }
+
+    #[test]
+    fn buck_makes_the_nearest_saddled_horse_buck_with_the_asked_clip() {
+        let mut app = app();
+        enter(&mut app, "goto 100 -200");
+        let bucking = |app: &mut App| {
+            let world = app.world_mut();
+            world
+                .query::<(Entity, &HorseBuck)>()
+                .iter(world)
+                .map(|(e, b)| (e, *b))
+                .collect::<Vec<_>>()
+        };
+        // Sin un caballo cerca, nada corcovea.
+        enter(&mut app, "buck");
+        assert_eq!(last_line(&app), "no saddled horse near: type horse");
+        assert!(bucking(&mut app).is_empty());
+        enter(&mut app, "horse");
+        enter(&mut app, "buck 3");
+        assert_eq!(last_line(&app), "the horse bucks: Buck_3");
+        let me = rider(&mut app).position;
+        let asked = bucking(&mut app);
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        let (horse, buck) = asked[0];
+        assert_eq!(buck, HorseBuck(Clip::Buck3));
+        let at = app.world().get::<Mountable>(horse).unwrap().0.position;
+        assert!(at.distance(me) < 6.0, "the console horse");
     }
 
     /// Una tecla presionada y soltada, tal como la envía la ventana.
