@@ -220,6 +220,15 @@ Costo, para el protagonista: 9,486 triángulos (piel 4,572, de los que 2,786 que
 
 Trata el cuerpo como entrada no confiable: tamaños acotados, cada accessor dentro de su buffer, cada índice y articulación comprobados, números finitos, y cada archivo que nombra (buffers e imágenes) un nombre simple dentro de la carpeta del cuerpo. Una entrada incorrecta recibe un error de una línea. La salida es determinista: las mismas entradas dan los mismos bytes.
 
+## `measure.py`: la estatura de los personajes
+
+Mide los modelos que escriben `mh2gltf.py` y `dress.py` a partir de la pose de reposo del esqueleto: la altura de las articulaciones `pelvis` y `head`, el largo de la pierna (muslo a pantorrilla más pantorrilla a pie, del lado izquierdo) y la estatura estimada sin sombrero, que es la articulación de la cabeza más 0,20 m (±3 cm). No lee la malla, así que el sombrero o el peinado nunca cuentan.
+
+```sh
+python3 -I tools/measure.py assets/characters/*/model.gltf
+python3 -I -B -m unittest discover -s tools -p test_measure.py
+```
+
 ## `glbtrim.py`: recortar GLB animados
 
 Conserva solo los clips de animación nombrados de un GLB autocontenido y descarta los accessors, las vistas de buffer y los datos binarios que nada más usa. Los nodos, las meshes, los skins y los materiales conservan sus índices, así que la escena no cambia. Usa solo la biblioteca estándar de Python 3, trata la entrada como datos no confiables (tamaños acotados, cada índice comprobado, sin URIs externas) y escribe los mismos bytes para la misma entrada. Hay que ejecutarlo aislado:

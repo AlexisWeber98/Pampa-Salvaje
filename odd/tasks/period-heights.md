@@ -1,0 +1,27 @@
+# Period heights
+
+Objective: every character 10 cm shorter in the rebuilt models, keeping the differences between them.
+Branch: `feat/period-heights`. Delivery: the user commits (no agent commits). Runners: `python3 -I -B -m unittest discover -s tools -p 'test_*.py'`, `cargo test` (`--test-threads=2`, memory cap).
+
+## Specs
+
+- **S1** (user, 2026-11-25): "no todos a una misma altura, mejor bajale 10 cm a todos (los que tenían 1.81 pasan a 1.71, los que tenían 1.77 a 1.67, la vecina de 1.57 a 1.47 y así, el de 1.72, a 1.62 y así, acordate que es un promedio)". Statures are estimated without the hat as head-joint height + 0.20 m (±3 cm). Targets: protagonist 1.81 → 1.71, bairoletto 1.78 → 1.68, farach 1.84 → 1.74, hidalgo 1.77 → 1.67, paisano 1.80 → 1.70, peon 1.72 → 1.62, volga 1.95 → 1.85, headscarf 1.57 → 1.47, bun 1.66 → 1.56.
+- **S2** (todo.md): measure each model's stature properly first.
+- **S3** (todo.md): the change goes in the rebuilt models, not an in-game scale: `macrodetails-height/Height` in each `.mhm` + `tools/mh2gltf.py`; for the Rocketbox protagonist a scale in `tools/dress.py`.
+- **S4** (todo.md): check `Clip::ground_speed`, the rider fit (stirrups, reins, pillion) and the tests that measure in metres.
+
+## Tasks
+
+| ID | Specs | Route | Status |
+|---|---|---|---|
+| T1 | S2 | inline | done (uncommitted): `tools/measure.py` + `tools/test_measure.py` (RED observed, both tests sabotaged), README section |
+| T2 | S1, S3 | inline | lower `Height` in the 8 MakeHuman `.mhm`, rebuild, measure, calibrate; update the `BunConversion` bytes |
+| T3 | S1, S3 | inline | `dress.py --scale` applied at read time (0.945), rebuild the protagonist, measure |
+| T4 | S4 | inline | rider fit: scale `ANKLES`, `GALLOP_ANKLES`, `PILLION_ANKLES` (and maybe `PELVIS_RISE`) by the rider's leg like `fit_hand`; fix metre asserts |
+| T5 | S4 | inline | full suite + in-game check (stirrups, reins, pillion, first person, benches, playback rates < 2.0) |
+
+## Log
+
+- **L1** (user, 2026-11-25): "seguimos con las alturas de los personajes" (todo.md item 1, «Alturas de época»).
+- **L2** Explorer map: the build is pure numpy over MakeHuman data on disk (`~/.local/opt/makehuman-1.3.0`). Clips are rotations, rescaled per model by leg / reference leg (`rig.rs` `fit_pelvis`, `model_stride`), so `Clip::ground_speed` stays and `humanoid.glb` is NOT rebuilt (reference pelvis 0.939 / leg 0.865 kept). The rider ankle targets are absolute metres: the main risk (T4). Height ≈ 0.085-0.09 of the modifier per 10 cm, nonlinear: iterate against measurements. Regenerating townsfolk also brings in earlier garment code changes (volga poncho).
+- **L3** T1 baseline (`python3 -I tools/measure.py assets/characters/*/model.gltf`, 2026-11-25), metres, pelvis / head / leg / stature: bairoletto 0.933 / 1.577 / 0.830 / 1.78; farach 0.973 / 1.636 / 0.878 / 1.84; hidalgo 0.929 / 1.569 / 0.828 / 1.77; protagonist 0.914 / 1.606 / 0.796 / 1.81; bun 0.833 / 1.452 / 0.743 / 1.65; headscarf 0.777 / 1.369 / 0.686 / 1.57; paisano 0.943 / 1.595 / 0.851 / 1.80; peon 0.887 / 1.511 / 0.797 / 1.71; volga 1.046 / 1.740 / 0.942 / 1.94. Targets stay S1's (each current − 0.10; peon 1.62, volga 1.85, bun 1.56 per the user's figures). Next: T2.
