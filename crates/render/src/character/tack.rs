@@ -1977,8 +1977,9 @@ pub struct HorseTack {
     pub kit: TackKit,
     pub local: LocalFittings,
     pub torso: Affine3A,
-    /// El reposo de la grupa ([`Tack::croup_rest`]).
-    pub croup: Affine3A,
+    /// El reposo de la grupa ([`Tack::croup_rest`]), si el modelo sobre el
+    /// que se ajustaron la tiene.
+    pub croup: Option<Affine3A>,
     /// El caballo en reposo sobre el que se ajustaron (para medirlos).
     pub rest: TackRest,
 }
@@ -2100,7 +2101,7 @@ fn build_tack(
                 .get(*e)
                 .is_ok_and(|n| n.as_str() == HorseJoint::Croup.name())
         })
-        .map_or(bones[0], posed);
+        .map(posed);
     let inverse: Vec<Mat4> = rest.iter().map(|r| Mat4::from(r.inverse())).collect();
     let paints = tack_paints(stores);
     let modelled = recado.into_iter().flat_map(|r| r.pieces);
@@ -2283,14 +2284,13 @@ fn dress(
         commands.entity(carrier).try_remove::<Tack>();
         return;
     };
-    put_on_tack(
-        commands,
-        tack,
-        carrier,
-        &skin,
-        [t, n0, n1, n2, w, h],
-        croup.unwrap_or(t),
-    );
+    // La grupa y su reposo salen del mismo hueso, o los dos caen al torso: un
+    // hueso con el reposo de otro dejaría mal al que va en ancas.
+    let croup = match (croup, tack.croup) {
+        (Some(bone), Some(rest)) => (bone, rest),
+        _ => (t, tack.torso),
+    };
+    put_on_tack(commands, tack, carrier, &skin, [t, n0, n1, n2, w, h], croup);
 }
 
 /// Pone los aperos compartidos en el caballo `carrier`: las carcasas con
@@ -2303,7 +2303,7 @@ fn put_on_tack(
     carrier: Entity,
     skin: &SkinnedMesh,
     bones: [Entity; 6],
-    croup: Entity,
+    (croup, croup_rest): (Entity, Affine3A),
 ) {
     let range = model_range();
     let kit = &tack.kit;
@@ -2411,7 +2411,7 @@ fn put_on_tack(
         torso_rest: tack.torso,
         bit: (local.bit[0] + local.bit[1]) / 2.0,
         croup,
-        croup_rest: tack.croup,
+        croup_rest,
     });
 }
 

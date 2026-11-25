@@ -24,7 +24,8 @@
 //!   `Buck_3` ([`HorseBuck`]), el corcovo que usará el amansado;
 //! - `pillion on` / `pillion off`: Bairoletto va en ancas detrás del jugador,
 //!   que tiene que estar a caballo ([`Pillion`]), o se baja. Se queda en ancas
-//!   hasta `pillion off`, también al bajarse y volver a subir;
+//!   hasta `pillion off`, también al bajarse y volver a subir. Sin el modelo de
+//!   Bairoletto lo dice y no hace nada;
 //! - `turbo on` / `turbo off`: el caballo del jugador galopa a hasta
 //!   [`TURBO_KMH`] (y llega rápido a esa velocidad), o vuelve a su galope
 //!   normal;
@@ -60,7 +61,7 @@ use pampa_core::{
     Circle, CritterKind, FaunaSite, Heading, Rider, RiderParams, SettlementKind, SettlementLayout,
     TetheredHorse, TimeOfDay, TownLayout, Travel, Vec2 as GroundVec2, World,
 };
-use pampa_render::character::HorseBuck;
+use pampa_render::character::{CharacterModels, HorseBuck};
 use pampa_render::fauna::livestock::Clip;
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::{
@@ -584,6 +585,16 @@ type Watched<'w> = (
     (Option<ResMut<'w, ViewMode>>, Option<ResMut<'w, FreeCam>>),
 );
 
+/// Lo que un comando cambia de los caballos y la gente: cuántos caballos trajo
+/// `horse`, si se dibujan los modelos, el ajuste del jugador y los modelos
+/// cargados (sin el de Bairoletto, `pillion on` no hace nada).
+type Riders<'w, 's> = (
+    Local<'s, u32>,
+    Option<ResMut<'w, CharacterModelsShown>>,
+    Option<ResMut<'w, PlayerTuning>>,
+    Option<Res<'w, CharacterModels>>,
+);
+
 /// Ejecuta las líneas ingresadas e imprime lo que hizo cada una.
 fn run_entered(
     mut commands: Commands,
@@ -596,11 +607,7 @@ fn run_entered(
         Option<ResMut<crate::wallet::PlayerWallet>>,
     ),
     mut players: Query<(Entity, &mut Player, &mut Transform, Has<OnTrain>)>,
-    (mut horses, mut models, mut tuning): (
-        Local<u32>,
-        Option<ResMut<CharacterModelsShown>>,
-        Option<ResMut<PlayerTuning>>,
-    ),
+    (mut horses, mut models, mut tuning, people): Riders,
     (fauna, (site, flora), (mut view, mut free)): Watched,
     saddled: Query<(Entity, &Mountable, &CharacterVisual)>,
 ) {
@@ -669,6 +676,15 @@ fn run_entered(
             }
             Command::Pillion(true) if rider.travel() != Travel::Riding => {
                 console.print("pillion: get on a horse first");
+            }
+            // Sin su modelo no se sentaría nadie: no anunciarlo.
+            Command::Pillion(true)
+                if people
+                    .as_ref()
+                    .and_then(|p| p.of(FigureKind::Bairoletto))
+                    .is_none() =>
+            {
+                console.print("pillion: no model for Bairoletto");
             }
             Command::Pillion(true) => {
                 commands.entity(me).insert(Pillion(FigureKind::Bairoletto));
@@ -1484,6 +1500,14 @@ mod tests {
         enter(&mut app, "unlock all");
         crate::ride::testing::press(&mut app, crate::errand::INTERACT_KEY);
         assert_eq!(rider(&mut app).travel(), Travel::Riding);
+        // Sin su modelo no se sentaría: lo dice y no lo sube.
+        app.insert_resource(CharacterModels::default());
+        enter(&mut app, "pillion on");
+        assert_eq!(last_line(&app), "pillion: no model for Bairoletto");
+        assert_eq!(pillion(&mut app), None);
+        let mut people = CharacterModels::default();
+        people.0.insert("bairoletto", Default::default());
+        app.insert_resource(people);
         enter(&mut app, "pillion on");
         assert_eq!(last_line(&app), "pillion on: Bairoletto rides behind");
         assert_eq!(pillion(&mut app), Some(Pillion(FigureKind::Bairoletto)));

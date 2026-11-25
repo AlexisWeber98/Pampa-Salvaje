@@ -2095,6 +2095,81 @@ pub(crate) mod tests {
         assert!(place(&world).1.distance(Vec3::new(0.2, 0.65, 0.02)) < 1e-5);
     }
 
+    #[test]
+    fn a_pillion_follows_the_rider_the_croup_and_a_new_horse() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut people = CharacterModels::default();
+        people.0.insert("bairoletto", Handle::default());
+        world.insert_resource(people);
+        let me = world.spawn(Pillion(FigureKind::Bairoletto)).id();
+        let horse = |world: &mut World| {
+            let croup = world.spawn_empty().id();
+            let tack = Tack {
+                reins: [Entity::PLACEHOLDER; 2],
+                stirrups: [Entity::PLACEHOLDER; 2],
+                torso: croup,
+                head: Entity::PLACEHOLDER,
+                seat: Vec3::ZERO,
+                torso_rest: Affine3A::IDENTITY,
+                bit: Vec3::ZERO,
+                croup,
+                croup_rest: Affine3A::IDENTITY,
+            };
+            let body = HorseBody {
+                coat: Coat::Bayo,
+                rider: Some(FigureKind::Protagonist),
+                saddled: true,
+                gait: pampa_core::HorseGait::Idle,
+                gallop: 0.0,
+                speed: 0.0,
+                flight: None,
+                seed: 3,
+            };
+            let carrier = world.spawn((body, tack, ChildOf(me))).id();
+            // La grupa es un hueso de la escena del caballo.
+            world.entity_mut(croup).insert(ChildOf(carrier));
+            carrier
+        };
+        // Su asiento colgado de la grupa, con su modelo encima, y nadie más.
+        let seat = |world: &mut World, carrier: Entity| {
+            world.run_system_once(seat_pillions).unwrap();
+            let models: Vec<_> = world
+                .query::<(&Behind, &ChildOf)>()
+                .iter(world)
+                .map(|(b, c)| (b.0, c.parent()))
+                .collect();
+            let seat = world.get::<PillionSeat>(carrier).map(|s| s.seat);
+            if let Some(seat) = seat {
+                let croup = world.get::<Tack>(carrier).unwrap().croup;
+                assert_eq!(world.get::<ChildOf>(seat).unwrap().parent(), croup);
+                assert_eq!(models, [(carrier, seat)]);
+            } else {
+                assert!(models.is_empty(), "{models:?}");
+            }
+            seat
+        };
+        let first = horse(&mut world);
+        let on = seat(&mut world, first).expect("he sits behind the rider");
+        // Sin jinete se baja; con el jinete otra vez, vuelve a subir.
+        world.get_mut::<HorseBody>(first).unwrap().rider = None;
+        assert_eq!(seat(&mut world, first), None);
+        assert!(world.get_entity(on).is_err());
+        world.get_mut::<HorseBody>(first).unwrap().rider = Some(FigureKind::Protagonist);
+        let on = seat(&mut world, first).expect("he gets back on");
+        // La escena del caballo creada de nuevo: otra grupa, otro asiento.
+        let croup = world.spawn(ChildOf(first)).id();
+        world.get_mut::<Tack>(first).unwrap().croup = croup;
+        let again = seat(&mut world, first).expect("he sits on the new croup");
+        assert_ne!(again, on);
+        assert!(world.get_entity(on).is_err());
+        // Al bajarse el jugador se va el caballo; al volver a subir, en otro
+        // caballo, sigue en ancas.
+        world.entity_mut(first).despawn();
+        let second = horse(&mut world);
+        seat(&mut world, second).expect("he rides behind again");
+    }
+
     // --- con el caballo y el jinete incluidos --------------------------------
 
     use crate::character::cpu;
@@ -3264,9 +3339,11 @@ pub(crate) mod tests {
         // la bombacha apenas contra el cuero, como el jinete en la lana);
         // pegado al jinete sin entrar en él, salvo los brazos, que lo abrazan,
         // con las muñecas en su faja (por celdas de 5 cm, el ala del sombrero
-        // apoyada en su hombro derecho cuenta hasta 1.8 cm al galope; sin
+        // apoyada en su hombro derecho cuenta hasta 1.9 cm al galope; sin
         // enderezarse contra la grupa entraba 6 cm); y con los hombros sobre
-        // el pecho, no echados atrás.
+        // el pecho, no echados atrás. El tiempo es simulado: la carga solo
+        // cambia en qué fase del jinete se sienta, y en 21 fases (un segundo,
+        // más de dos trancos de galope) el ala no pasó de 1.9 cm.
         for speed in [0.0, 1.6, 8.0] {
             ride(&mut app, me, speed);
             let (mut sunk, mut gap) = (f32::MAX, f32::MAX);
