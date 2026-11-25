@@ -33,7 +33,7 @@ pub use fade::Fading;
 pub use figure::{FigureBody, FigureJoint, FigureKind, FigurePart, TOWNSFOLK_LOOKS};
 pub use horse::{Coat, HorseBody, HorseBuck, HorseModel, HorseRig};
 pub use model::{CharacterModel, CharacterModels, CharacterModelsShown};
-pub use rider::{RiderMotion, Riding, Rising, Saddle, Seated};
+pub use rider::{Pillion, RiderMotion, Riding, Rising, Saddle, Seated};
 pub use rig::{GAZE_MAX, Gaze, Rig, Talking};
 pub use tack::{HorsePiece, Strap, Tack};
 pub use townsfolk::TintCache;

@@ -845,6 +845,7 @@ abierta el juego no recibe ninguna tecla.
 | `goto X Y` | Ir a un punto, en metros del juego |
 | `horse` | Poner un caballo ensillado junto al jugador (montable una vez desbloqueada la monta) |
 | `buck` / `buck 2` / `buck 3` | El caballo ensillado sin jinete más cercano (a hasta 30 m) corcovea una vez, en el lugar, con `Buck_1`, `Buck_2` o `Buck_3`: los corcovos que usará el amansado del Acto 8 |
+| `pillion on` / `pillion off` | Subir a Bairoletto en ancas, sobre la grupa justo detrás del recado del jugador a caballo (sin riendas ni estribos, las piernas colgando, agarrado de la faja del jinete y con la cara junto a su hombro derecho; con alguien en ancas el jinete galopa sentado), o bajarlo; se queda en ancas hasta `pillion off`, aunque el jugador se baje y vuelva a subir (sin el modelo de Bairoletto, lo avisa y no lo sube) |
 | `turbo on` / `turbo off` | Dejar que el caballo del jugador galope a hasta 70 km/h, para recorrer el mapa rápido, o volver a lo normal |
 | `unlock all` | Desbloquear todas las habilidades (y todo el mapa del juego en el minimapa ampliado) |
 | `money N` | Sumar N pesos a la plata del jugador, con centavos si hacen falta (`money 2,50`), para probar las compras |

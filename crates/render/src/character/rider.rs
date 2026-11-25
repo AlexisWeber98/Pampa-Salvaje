@@ -50,6 +50,18 @@
 //!   cabezada, el peso se desplaza de vez en cuando y la cabeza mira a su
 //!   alrededor.
 //!
+//! Alguien puede ir **en ancas** ([`Pillion`], en la entidad del personaje
+//! montado): [`seat_pillions`] lo sienta sobre la grupa ([`PILLION_SEAT`]),
+//! colgado de su hueso ([`HorseJoint::Croup`](super::bones::HorseJoint)), que la
+//! sigue en cada andar, justo detrás del recado y del jinete. Sin riendas ni
+//! estribos: reproduce `sit_idle` y [`pose_riders`], después de poner en pose
+//! al jinete, lo sienta a horcajadas ([`Behind`]): derecho en las caderas
+//! contra el cabeceo de la grupa ([`PILLION_LEVEL`]), las piernas colgando a
+//! los costados ([`PILLION_ANKLES`]), los hombros en su lugar, agarrado de la
+//! faja del jinete ([`PILLION_HOLD`]) y con la cara junto a su hombro derecho
+//! ([`PILLION_ASIDE`]). Con alguien en ancas el jinete galopa sentado, sin
+//! medio asiento.
+//!
 //! Los retrasos son resortes con amortiguamiento crítico ([`Spring`]), iguales
 //! a cualquier frame rate.
 //!
@@ -115,6 +127,83 @@ pub fn seat_transform(seat: Vec3) -> Affine3A {
         Quat::from_rotation_y(FRAC_PI_2),
         seat + Vec3::Y * PELVIS_RISE,
     )
+}
+
+/// Alguien que va en ancas, sobre la grupa detrás del jinete, en el caballo
+/// ensillado de un personaje montado ([`CharacterVisual::Mounted`]): se
+/// inserta en la entidad del personaje junto a su visual, y se quita para
+/// bajarlo. Sin riendas ni estribos; ver [`seat_pillions`].
+///
+/// [`CharacterVisual::Mounted`]: super::CharacterVisual::Mounted
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pillion(pub FigureKind);
+
+/// Marca el modelo de quien va en ancas ([`Pillion`]): un [`Riding`] cuyo
+/// asiento es la grupa, que [`pose_riders`] sienta a horcajadas. Lleva el
+/// cuerpo del caballo, contra cuyo cabeceo se mantiene derecho.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Behind(pub Entity);
+
+/// En el cuerpo de un caballo con alguien en ancas: quién es, el asiento
+/// sobre la grupa (del que cuelga su modelo) y el hueso de la grupa del que
+/// cuelga el asiento (otro si la escena del caballo se creó de nuevo).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct PillionSeat {
+    pub kind: FigureKind,
+    pub seat: Entity,
+    pub croup: Entity,
+}
+
+/// Dónde se apoya en la grupa quien va en ancas, en el marco del cuerpo del
+/// caballo: sobre la línea del lomo, en lo alto de la grupa (la piel de henry
+/// en reposo está a 1.53 m entre -0.45 y -0.30), justo detrás del recado y
+/// del jinete (lo último de ellos, el poncho y la bajera, llega a x -0.21),
+/// no sobre las caderas, que se mueven mucho. Más adelante, al galope, el ala
+/// de su sombrero entraba en el hombro del jinete.
+pub const PILLION_SEAT: Vec3 = Vec3::new(-0.38, 1.528, 0.0);
+
+/// A qué altura por encima de la piel de la grupa está la articulación de la
+/// pelvis de quien va en ancas: el fondillo de los pantalones queda 0.147 m
+/// por debajo de ella, y sin el cuero de oveja del recado no se hunde.
+pub const PILLION_RISE: f32 = 0.15;
+
+/// Adónde van los tobillos de quien va en ancas, primero el izquierdo y
+/// después el derecho, desde la pelvis (espacio del jinete): colgando sueltos
+/// a los costados de la panza, un poco más adelante que las caderas.
+pub const PILLION_ANKLES: [Vec3; 2] = [Vec3::new(0.40, -0.66, 0.06), Vec3::new(-0.40, -0.66, 0.06)];
+
+/// Qué parte del cabeceo y del rolido de la grupa (henry galopa con el lomo
+/// unos 8° hacia adelante) deshace quien va en ancas en las caderas: sin esto
+/// se iría con la cabeza sobre la espalda del jinete.
+pub const PILLION_LEVEL: f32 = 0.8;
+
+/// Cuánto se dobla hacia su derecha en el pecho, y cuánto gira la cabeza
+/// hacia ese lado, en radianes: pegado a la espalda del jinete, asoma la cara
+/// junto a su hombro derecho (el izquierdo lleva el poncho doblado) en lugar
+/// de chocar con su cabeza.
+pub const PILLION_ASIDE: (f32, f32) = (0.22, 0.45);
+
+/// Dónde se agarra del jinete, primero la mano izquierda y después la
+/// derecha: a los costados de su faja, hacia los riñones (más adelante, al
+/// galope se le iría de las manos), en el espacio del
+/// modelo del jinete desde su `spine_01`.
+pub const PILLION_HOLD: [Vec3; 2] = [
+    Vec3::new(0.17, -0.03, -0.09),
+    Vec3::new(-0.17, -0.03, -0.09),
+];
+
+/// Hacia dónde se doblan sus codos al agarrarse: hacia afuera y hacia abajo.
+pub const PILLION_ELBOW_POLE: [Vec3; 2] = [Vec3::new(1.0, -1.0, -0.2), Vec3::new(-1.0, -1.0, -0.2)];
+
+/// Hacia dónde se doblan sus rodillas: hacia adelante y hacia afuera,
+/// alrededor de la grupa.
+pub const PILLION_KNEE_POLE: [Vec3; 2] = [Vec3::new(1.0, -0.2, 1.0), Vec3::new(-1.0, -0.2, 1.0)];
+
+/// Dónde se ubica el modelo de quien va en ancas bajo su asiento
+/// ([`PillionSeat`]): mirando hacia el frente del caballo, con la pelvis
+/// [`PILLION_RISE`] por encima de la piel.
+pub fn pillion_transform() -> Affine3A {
+    Affine3A::from_rotation_translation(Quat::from_rotation_y(FRAC_PI_2), Vec3::Y * PILLION_RISE)
 }
 
 /// Adónde van los tobillos, primero el izquierdo y después el derecho, desde la
@@ -794,6 +883,9 @@ pub const GAZE_EASE: f32 = 6.0;
 #[derive(Component, Debug, Clone)]
 pub struct Saddle {
     pub torso: Vec<Entity>,
+    /// Desde la raíz del modelo hasta la grupa ([`Tack::croup`]), de la que
+    /// cuelga quien va en ancas.
+    pub croup: Vec<Entity>,
     pub head: Vec<Entity>,
     pub bit: Vec3,
     /// The `Torso` bone's turn at rest in the body frame: the saddle's level
@@ -909,6 +1001,94 @@ fn sit_on_bench(transforms: &mut Bones, seated: &Seated, on_bench: bool, rise: f
     }
 }
 
+/// Sienta a horcajadas a quien va en ancas ([`Behind`]), con la pelvis ya
+/// sobre su asiento girado `tilt` (en el marco del cuerpo del caballo): se
+/// mantiene derecho en las caderas contra lo que cabecea y rola la grupa
+/// ([`PILLION_LEVEL`]), y las piernas cuelgan a los costados
+/// ([`PILLION_ANKLES`]), las rodillas hacia afuera ([`PILLION_KNEE_POLE`]).
+/// Con los hombros en su lugar (el clip los echa atrás), se agarra del
+/// jinete: las muñecas van a `hold` (espacio del modelo), su faja
+/// ([`PILLION_HOLD`]); sin jinete, las manos quedan en el regazo, como en el
+/// clip. Pegado a su espalda, se dobla hacia la derecha en el pecho y asoma
+/// la cara junto a su hombro ([`PILLION_ASIDE`]).
+fn straddle(transforms: &mut Bones, seated: &Seated, tilt: Quat, hold: Option<[Vec3; 2]>) {
+    let get = |transforms: &Bones, bone: Bone| transforms.get(seated.bone(bone)).ok().copied();
+    let Some(root) = get(transforms, Bone::Root) else {
+        return;
+    };
+    // Lo que la grupa lo saca de la vertical, deshecho en su mayor parte, en
+    // el espacio del modelo (girado `pillion_transform` sobre el asiento).
+    let model = tilt * Quat::from_rotation_y(FRAC_PI_2);
+    let upright = Quat::from_rotation_arc(tilt * Vec3::Y, Vec3::Y);
+    let level = into_rider(Quat::IDENTITY.slerp(upright, PILLION_LEVEL), model);
+    if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
+        pelvis.rotation =
+            (root.rotation.inverse() * level * root.rotation * pelvis.rotation).normalize();
+    }
+    let Some(pelvis) = get(transforms, Bone::Pelvis) else {
+        return;
+    };
+    let pelvis = Place::IDENTITY.then(&root).then(&pelvis);
+    for s in 0..2 {
+        let leg = [Bone::Thigh(s), Bone::Calf(s), Bone::Foot(s)].map(|b| seated.bone(b));
+        reach(
+            transforms,
+            pelvis,
+            leg,
+            PILLION_ANKLES[s],
+            PILLION_KNEE_POLE[s],
+        );
+    }
+    // Doblado hacia su derecha en el pecho.
+    let (Some(spine1), Some(spine2)) =
+        (get(transforms, Bone::Spine1), get(transforms, Bone::Spine2))
+    else {
+        return;
+    };
+    let spine2 = pelvis.then(&spine1).then(&spine2);
+    turn_bone(
+        transforms,
+        spine2,
+        seated.bone(Bone::Spine3),
+        Quat::from_rotation_z(PILLION_ASIDE.0),
+    );
+    let Some(spine3) = get(transforms, Bone::Spine3) else {
+        return;
+    };
+    let chest = spine2.then(&spine3);
+    for s in 0..2 {
+        if let Ok(mut t) = transforms.get_mut(seated.bone(Bone::Clavicle(s))) {
+            t.rotation = seated.clavicles[s];
+        }
+    }
+    // Cada hombro y el largo de su brazo, del hombro a la muñeca.
+    let arm = |transforms: &Bones, chest: Place, s: usize| {
+        let (clavicle, upper) = (
+            get(transforms, Bone::Clavicle(s))?,
+            get(transforms, Bone::UpperArm(s))?,
+        );
+        let (lower, wrist) = (
+            get(transforms, Bone::LowerArm(s))?,
+            get(transforms, Bone::Hand(s))?,
+        );
+        let shoulder = chest.then(&clavicle);
+        let length = lower.translation.length() + wrist.translation.length();
+        Some((shoulder, shoulder.then(&upper).translation, length))
+    };
+    for s in 0..2 {
+        let Some(hold) = hold else {
+            continue;
+        };
+        let Some((shoulder, joint, length)) = arm(transforms, chest, s) else {
+            continue;
+        };
+        let target = within_reach(hold[s], joint, length, REACH.1);
+        let bones = [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
+        reach(transforms, shoulder, bones, target, PILLION_ELBOW_POLE[s]);
+    }
+    turn_head(transforms, seated, -PILLION_ASIDE.1);
+}
+
 /// Gira el cuello y la cabeza de una persona sentada `turn` radianes alrededor
 /// del eje vertical del modelo (positivo hacia la izquierda), la mitad cada
 /// uno, por encima del clip.
@@ -955,6 +1135,7 @@ type Sitter = (
     &'static mut RiderMotion,
     &'static mut Visibility,
     Has<OnBench>,
+    Option<&'static Behind>,
 );
 
 /// Ajusta cada jinete que se reproduce a su caballo (ver las notas del módulo),
@@ -967,147 +1148,198 @@ type Sitter = (
 /// half-seat). Anything that later hands that rein elsewhere (dismounting,
 /// leading the horse by it) must first take the rider off the horse, or this
 /// system overwrites it on the next frame.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn pose_riders(
     time: Res<Time>,
     clips: Option<Res<CharacterClips>>,
-    horses: Query<(&HorseBody, &Saddle)>,
+    horses: Query<(&HorseBody, &Saddle, Has<PillionSeat>)>,
     (tacks, mut straps): (Query<&Tack>, Query<&mut Strap>),
     mut riders: Query<Sitter>,
     (parents, risers, gazes): (Query<&ChildOf>, Query<&Rising>, Query<&Gaze>),
     mut transforms: Bones,
+    mut fronts: Local<Vec<(Entity, Entity, [Entity; 3])>>,
 ) {
     let dt = time.delta_secs();
-    for (me, rig, riding, seated, mut m, mut shown, on_bench) in &mut riders {
-        if rig.frozen || !rig.started {
-            continue;
-        }
-        // En pose a partir de aquí: se dibuja.
-        shown.set_if_neq(Visibility::Inherited);
-        let Ok((horse, saddle)) = horses.get(riding.horse) else {
-            // En el pescante de un vehículo: la pelvis en el origen del
-            // modelo, sobre el asiento, y el resto como lo pone el clip.
-            let rise = if on_bench {
-                rise_of(riding.horse, &parents, &risers)
+    // Los jinetes de los caballos ensillados, de los que se agarra quien va
+    // en ancas: el caballo, el modelo y sus huesos hasta `spine_01`.
+    fronts.clear();
+    fronts.extend(
+        riders
+            .iter()
+            .filter(|(.., behind)| behind.is_none())
+            .filter(|(_, _, riding, ..)| horses.contains(riding.horse))
+            .map(|(me, _, riding, seated, ..)| {
+                let waist = [Bone::Root, Bone::Pelvis, Bone::Spine1].map(|b| seated.bone(b));
+                (riding.horse, me, waist)
+            }),
+    );
+    // Primero los jinetes y después quienes van en ancas, que se agarran de
+    // ellos ya puestos en pose en este frame.
+    for pass in [false, true] {
+        for (me, rig, riding, seated, mut m, mut shown, on_bench, behind) in &mut riders {
+            if behind.is_some() != pass {
+                continue;
+            }
+            if rig.frozen || !rig.started {
+                continue;
+            }
+            // En pose a partir de aquí: se dibuja.
+            shown.set_if_neq(Visibility::Inherited);
+            let Ok((horse, saddle, doubled)) = horses.get(riding.horse) else {
+                // En el pescante de un vehículo: la pelvis en el origen del
+                // modelo, sobre el asiento, y el resto como lo pone el clip.
+                let rise = if on_bench {
+                    rise_of(riding.horse, &parents, &risers)
+                } else {
+                    0.0
+                };
+                if rise > 0.0 {
+                    if let Ok(mut model) = transforms.get_mut(me) {
+                        model.translation.y = bench_lift(rise);
+                    }
+                    // De pie, la pelvis a la altura de sus propias piernas, como
+                    // la de una figura a pie (ver `fit_rigs`).
+                    let reference = clips.as_deref().and_then(|c| c.reference);
+                    if let (Some(reference), Some((pelvis, rest, leg))) = (reference, rig.pelvis)
+                        && let Ok(mut t) = transforms.get_mut(pelvis)
+                    {
+                        t.translation = fit_pelvis(t.translation, reference, rest, leg);
+                    }
+                }
+                sit_on_bench(&mut transforms, seated, on_bench, rise);
+                if let Some(&Behind(carrier)) = behind {
+                    // Su asiento y la cintura del jinete en el marco del cuerpo
+                    // del caballo, con la pose de este frame: cómo lo gira la
+                    // grupa, y adónde van sus manos (en el espacio de su modelo).
+                    let saddle = horses.get(carrier).ok().map(|(_, saddle, _)| saddle);
+                    let local = |e: Entity| transforms.get(e).ok().map(|t| t.compute_affine());
+                    let seat = saddle.and_then(|saddle| {
+                        Some(chain_affine(&saddle.croup, &transforms) * local(riding.horse)?)
+                    });
+                    let (_, tilt, _) = seat.unwrap_or_default().to_scale_rotation_translation();
+                    let hold = seat.zip(saddle).and_then(|(seat, saddle)| {
+                        let &(_, model, [root, pelvis, spine]) =
+                            fronts.iter().find(|f| f.0 == carrier)?;
+                        let front = chain_affine(&saddle.torso, &transforms) * local(model)?;
+                        let waist = Place::IDENTITY
+                            .then(transforms.get(root).ok()?)
+                            .then(transforms.get(pelvis).ok()?)
+                            .then(transforms.get(spine).ok()?)
+                            .translation;
+                        let mine = (seat * local(me)?).inverse();
+                        Some(
+                            PILLION_HOLD
+                                .map(|h| mine.transform_point3(front.transform_point3(waist + h))),
+                        )
+                    });
+                    straddle(&mut transforms, seated, tilt, hold);
+                }
+                if on_bench {
+                    // Gira la cabeza hacia lo que mira, si mira algo.
+                    let want = parents
+                        .get(riding.horse)
+                        .ok()
+                        .and_then(|person| gazes.get(person.parent()).ok())
+                        .map_or(0.0, |g| g.0.clamp(-GAZE_MAX, GAZE_MAX));
+                    let turn = m.gaze.step(want, GAZE_EASE, dt);
+                    turn_head(&mut transforms, seated, turn);
+                }
+                continue;
+            };
+            let (Some(seat), Some(root)) = (
+                transforms.get(me).ok().copied(),
+                transforms.get(seated.bone(Bone::Root)).ok().copied(),
+            ) else {
+                continue;
+            };
+            // La montura en el marco del cuerpo, y el jinete en ella.
+            let torso = chain_affine(&saddle.torso, &transforms);
+            let rider = torso * seat.compute_affine();
+            let (_, frame, _) = rider.to_scale_rotation_translation();
+            let (_, tilt, _) = torso.to_scale_rotation_translation();
+            // La altura del asiento (donde se apoya la pelvis), y el cabeceo y el
+            // rolido de la montura.
+            let (saddle_pitch, saddle_roll) = saddle_attitude(tilt, saddle.rest);
+            let now = [rider.translation.y, saddle_pitch, saddle_roll];
+            let head = chain_affine(&saddle.head, &transforms);
+            let bit = rider
+                .inverse()
+                .transform_point3(head.transform_point3(saddle.bit));
+            if !m.primed {
+                m.saddle = now.map(Spring::at);
+                m.level = Spring::at(saddle_pitch);
+                m.bit = bit.to_array().map(Spring::at);
+                m.free = THIGH_HAND.to_array().map(Spring::at);
+                m.seed = riding.seed;
+                m.speed = horse.speed;
+                m.primed = true;
+            }
+            m.clock = pampa_core::tick_clock(m.clock, dt);
+            // Un salto: plegado hacia adelante desde el despegue y en lo alto, y
+            // después enderezándose y absorbiendo el aterrizaje en las rodillas y
+            // las caderas.
+            let fold = m
+                .fold
+                .step(horse.flight.map_or(0.0, jump_fold), JUMP_EASE, dt)
+                .clamp(0.0, 1.0);
+            m.landed = match (m.flying, horse.flight) {
+                (_, Some(_)) => None,
+                (true, None) => Some(0.0),
+                (false, None) => m.landed.map(|t| t + dt).filter(|t| *t < LANDING),
+            };
+            m.flying = horse.flight.is_some();
+            let give = m.landed.map_or(0.0, landing);
+            // Los clips del andar se detienen en el aire: el medio asiento se
+            // mantiene durante el salto y su aterrizaje.
+            let jumping = f32::from(m.flying || m.landed.is_some());
+            // Lo que hace la montura más allá de su trayectoria suavizada.
+            let mut off = [0.0; 3];
+            for k in 0..3 {
+                let smooth = m.saddle[k].step(now[k], SADDLE_EASE, dt);
+                off[k] = now[k] - smooth;
+            }
+            // Sobre un salto mantiene el equilibrio cabecee como cabecee el
+            // caballo: su cabeceo desde que dejó el suelo (ver [`saddle_attitude`])
+            // se absorbe en las caderas, entrando y
+            // saliendo de forma gradual.
+            let level = if jumping > 0.0 {
+                m.level.value
+            } else {
+                m.level.step(saddle_pitch, SADDLE_EASE, dt)
+            };
+            // Enseguida al despegar (el caballo todavía no cabeceó), y se desvanece
+            // una vez que aterrizó.
+            if jumping > 0.0 {
+                m.poise = Spring::at(1.0);
+            }
+            let poise = m.poise.step(0.0, JUMP_EASE, dt).clamp(0.0, 1.0);
+            let balance = JUMP_BALANCE * poise * (saddle_pitch - level);
+            let [rise, pitch, roll] = off;
+            // Velocidad, frenado y quietud.
+            let accel = if dt > 0.0 {
+                (horse.speed - m.speed) / dt
             } else {
                 0.0
             };
-            if rise > 0.0 {
-                if let Ok(mut model) = transforms.get_mut(me) {
-                    model.translation.y = bench_lift(rise);
-                }
-                // De pie, la pelvis a la altura de sus propias piernas, como
-                // la de una figura a pie (ver `fit_rigs`).
-                let reference = clips.as_deref().and_then(|c| c.reference);
-                if let (Some(reference), Some((pelvis, rest, leg))) = (reference, rig.pelvis)
-                    && let Ok(mut t) = transforms.get_mut(pelvis)
-                {
-                    t.translation = fit_pelvis(t.translation, reference, rest, leg);
-                }
-            }
-            sit_on_bench(&mut transforms, seated, on_bench, rise);
-            if on_bench {
-                // Gira la cabeza hacia lo que mira, si mira algo.
-                let want = parents
-                    .get(riding.horse)
-                    .ok()
-                    .and_then(|person| gazes.get(person.parent()).ok())
-                    .map_or(0.0, |g| g.0.clamp(-GAZE_MAX, GAZE_MAX));
-                let turn = m.gaze.step(want, GAZE_EASE, dt);
-                turn_head(&mut transforms, seated, turn);
-            }
-            continue;
-        };
-        let (Some(seat), Some(root)) = (
-            transforms.get(me).ok().copied(),
-            transforms.get(seated.bone(Bone::Root)).ok().copied(),
-        ) else {
-            continue;
-        };
-        // La montura en el marco del cuerpo, y el jinete en ella.
-        let torso = chain_affine(&saddle.torso, &transforms);
-        let rider = torso * seat.compute_affine();
-        let (_, frame, _) = rider.to_scale_rotation_translation();
-        let (_, tilt, _) = torso.to_scale_rotation_translation();
-        // La altura del asiento (donde se apoya la pelvis), y el cabeceo y el
-        // rolido de la montura.
-        let (saddle_pitch, saddle_roll) = saddle_attitude(tilt, saddle.rest);
-        let now = [rider.translation.y, saddle_pitch, saddle_roll];
-        let head = chain_affine(&saddle.head, &transforms);
-        let bit = rider
-            .inverse()
-            .transform_point3(head.transform_point3(saddle.bit));
-        if !m.primed {
-            m.saddle = now.map(Spring::at);
-            m.level = Spring::at(saddle_pitch);
-            m.bit = bit.to_array().map(Spring::at);
-            m.free = THIGH_HAND.to_array().map(Spring::at);
-            m.seed = riding.seed;
             m.speed = horse.speed;
-            m.primed = true;
-        }
-        m.clock = pampa_core::tick_clock(m.clock, dt);
-        // Un salto: plegado hacia adelante desde el despegue y en lo alto, y
-        // después enderezándose y absorbiendo el aterrizaje en las rodillas y
-        // las caderas.
-        let fold = m
-            .fold
-            .step(horse.flight.map_or(0.0, jump_fold), JUMP_EASE, dt)
-            .clamp(0.0, 1.0);
-        m.landed = match (m.flying, horse.flight) {
-            (_, Some(_)) => None,
-            (true, None) => Some(0.0),
-            (false, None) => m.landed.map(|t| t + dt).filter(|t| *t < LANDING),
-        };
-        m.flying = horse.flight.is_some();
-        let give = m.landed.map_or(0.0, landing);
-        // Los clips del andar se detienen en el aire: el medio asiento se
-        // mantiene durante el salto y su aterrizaje.
-        let jumping = f32::from(m.flying || m.landed.is_some());
-        // Lo que hace la montura más allá de su trayectoria suavizada.
-        let mut off = [0.0; 3];
-        for k in 0..3 {
-            let smooth = m.saddle[k].step(now[k], SADDLE_EASE, dt);
-            off[k] = now[k] - smooth;
-        }
-        // Sobre un salto mantiene el equilibrio cabecee como cabecee el
-        // caballo: su cabeceo desde que dejó el suelo (ver [`saddle_attitude`])
-        // se absorbe en las caderas, entrando y
-        // saliendo de forma gradual.
-        let level = if jumping > 0.0 {
-            m.level.value
-        } else {
-            m.level.step(saddle_pitch, SADDLE_EASE, dt)
-        };
-        // Enseguida al despegar (el caballo todavía no cabeceó), y se desvanece
-        // una vez que aterrizó.
-        if jumping > 0.0 {
-            m.poise = Spring::at(1.0);
-        }
-        let poise = m.poise.step(0.0, JUMP_EASE, dt).clamp(0.0, 1.0);
-        let balance = JUMP_BALANCE * poise * (saddle_pitch - level);
-        let [rise, pitch, roll] = off;
-        // Velocidad, frenado y quietud.
-        let accel = if dt > 0.0 {
-            (horse.speed - m.speed) / dt
-        } else {
-            0.0
-        };
-        m.speed = horse.speed;
-        let braking = m
-            .braking
-            .step((-accel / BRAKING).clamp(0.0, 1.0), BRAKING_EASE, dt);
-        m.still = if horse.speed < STANDING {
-            m.still + dt
-        } else {
-            0.0
-        };
-        let settled = f32::from(m.still > STILL);
-        let rest = m.rest.step(settled, REST_EASE, dt).clamp(0.0, 1.0);
-        let gallop = horse.gallop.max(jumping).clamp(0.0, 1.0);
-        // El medio asiento entra con el galope, con retraso.
-        let half = m.half.step(gallop, HALF_SEAT_EASE, dt).clamp(0.0, 1.0);
-        let walking = (horse.speed / WALK_TOP).min(1.0) * (1.0 - gallop);
-        let lean = m.lean.step(
+            let braking = m
+                .braking
+                .step((-accel / BRAKING).clamp(0.0, 1.0), BRAKING_EASE, dt);
+            m.still = if horse.speed < STANDING {
+                m.still + dt
+            } else {
+                0.0
+            };
+            let settled = f32::from(m.still > STILL);
+            let rest = m.rest.step(settled, REST_EASE, dt).clamp(0.0, 1.0);
+            let gallop = horse.gallop.max(jumping).clamp(0.0, 1.0);
+            // El medio asiento entra con el galope, con retraso. Con alguien en
+            // ancas agarrado de su cintura no se para en los estribos: galopa
+            // sentado (salvo sobre un salto).
+            let rising = if doubled { jumping } else { gallop };
+            let half = m.half.step(rising, HALF_SEAT_EASE, dt).clamp(0.0, 1.0);
+            let walking = (horse.speed / WALK_TOP).min(1.0) * (1.0 - gallop);
+            let lean = m.lean.step(
             LEAN.0 * half + LEAN.1 * walking - LEAN.2 * braking + SIT_UP * (1.0 - half),
             LEAN_EASE,
             dt,
@@ -1118,223 +1350,228 @@ pub(super) fn pose_riders(
             // smoothed pitch (henry's gallop carries the back ~8° nose down)
             // is taken back at the hips; its quick nods go to the spine.
             + level;
-        // Sobre un salto las caderas absorben el cabeceo (`balance`), no la
-        // columna.
-        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch * (1.0 - poise), COUNTER_EASE, dt);
-        let counter_roll = m.counter[1].step(COUNTER.1 * roll, COUNTER_EASE, dt);
-        let slack = Vec3::new(
-            bit.x - m.bit[0].step(bit.x, BIT_EASE, dt),
-            bit.y - m.bit[1].step(bit.y, BIT_EASE, dt),
-            bit.z - m.bit[2].step(bit.z, BIT_EASE, dt),
-        );
-        let get = |t: &Bones, b: Bone| t.get(seated.bone(b)).copied().ok();
-        let root = Place::IDENTITY.then(&root);
-        // El asiento. Al paso se sienta hondo en el recado; en medio
-        // asiento flota por encima de él, adelantado sobre las rodillas, sin
-        // acompañar el rebote de la montura: lo absorben las piernas. Nunca
-        // por debajo del asiento.
-        // Al aterrizar las rodillas y las caderas ceden, y el asiento baja
-        // hasta la montura (nunca dentro de ella).
-        let hover = (HALF_SEAT.y - rise).clamp(0.0, HALF_SEAT.y * 2.0)
-            * (1.0 - LANDING_GIVE.1 * give).max(0.0);
-        let seat = Vec3::new(0.0, half * hover, half * HALF_SEAT.z);
-        let period = SHIFT.0 + (riding.seed % SHIFT.1) as f32;
-        let shift = Quat::from_rotation_z(
-            SHIFT.2 * rest * (std::f32::consts::TAU * m.clock / period).sin(),
-        );
-        // Una espalda recta: la inclinación está sobre todo en las caderas.
-        let tip = Quat::from_rotation_x(HIP_SHARE * lean) * shift;
-        if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
-            pelvis.translation = root.rotation.inverse() * (seat - root.translation);
-            pelvis.rotation =
-                (root.rotation.inverse() * tip * root.rotation * pelvis.rotation).normalize();
-        }
-        let Some(pelvis) = get(&transforms, Bone::Pelvis) else {
-            continue;
-        };
-        let pelvis = root.then(&pelvis);
-        // La columna: el resto de la inclinación, compensando la montura con
-        // retraso.
-        let counter = |share: f32| {
-            into_rider(
-                Quat::from_rotation_z(-share * counter_pitch)
-                    * Quat::from_rotation_x(share * counter_roll),
-                frame,
-            )
-        };
-        turn_bone(
-            &mut transforms,
-            pelvis,
-            seated.bone(Bone::Spine1),
-            Quat::from_rotation_x((1.0 - HIP_SHARE) * lean) * counter(0.6),
-        );
-        let Some(spine1) = get(&transforms, Bone::Spine1) else {
-            continue;
-        };
-        let spine1 = pelvis.then(&spine1);
-        let flex = (FLEX * rise * (1.0 - half)).clamp(-FLEX_MAX, FLEX_MAX);
-        turn_bone(
-            &mut transforms,
-            spine1,
-            seated.bone(Bone::Spine2),
-            Quat::from_rotation_x(flex) * counter(0.4),
-        );
-        let mut chest = spine1;
-        for b in [Bone::Spine2, Bone::Spine3] {
-            if let Some(t) = get(&transforms, b) {
-                chest = chest.then(&t);
-            }
-        }
-        // La cabeza nivelada y mirando hacia adelante (como la tenía al
-        // sentarse), estabilizada con un leve retraso, y mirando a su alrededor
-        // estando quieto.
-        let (Some(neck), Some(skull)) =
-            (get(&transforms, Bone::Neck), get(&transforms, Bone::Head))
-        else {
-            continue;
-        };
-        let up = frame * chest.then(&neck).then(&skull).rotation * Vec3::Y;
-        let nodding = up.x.atan2(up.y);
-        if !m.head_primed {
-            m.head0 = nodding;
-            m.head_primed = true;
-        }
-        let off_level = nodding - m.head0;
-        // La mayor parte enseguida y el resto con un leve retraso: estable, no
-        // rígida.
-        let level = 0.85 * off_level + 0.15 * m.head.step(off_level, HEAD_EASE, dt);
-        let glance = 0.5 * rest * pampa_core::pose::glance(riding.seed, m.clock);
-        let nod = |share: f32| {
-            Quat::from_rotation_y(glance) * into_rider(Quat::from_rotation_z(share * level), frame)
-        };
-        turn_bone(&mut transforms, chest, seated.bone(Bone::Neck), nod(0.5));
-        if let Some(neck) = get(&transforms, Bone::Neck) {
-            turn_bone(
-                &mut transforms,
-                chest.then(&neck),
-                seated.bone(Bone::Head),
-                nod(0.5),
+            // Sobre un salto las caderas absorben el cabeceo (`balance`), no la
+            // columna.
+            let counter_pitch =
+                m.counter[0].step(COUNTER.0 * pitch * (1.0 - poise), COUNTER_EASE, dt);
+            let counter_roll = m.counter[1].step(COUNTER.1 * roll, COUNTER_EASE, dt);
+            let slack = Vec3::new(
+                bit.x - m.bit[0].step(bit.x, BIT_EASE, dt),
+                bit.y - m.bit[1].step(bit.y, BIT_EASE, dt),
+                bit.z - m.bit[2].step(bit.z, BIT_EASE, dt),
             );
-        }
-        // Las piernas hacia los estribos, con los talones abajo en medio
-        // asiento y más a medida que el asiento baja sobre ellos.
-        let heel = Quat::from_rotation_x(-half * (HEEL + 2.0 * (HALF_SEAT.y - hover).max(0.0)));
-        for s in 0..2 {
-            let leg = [Bone::Thigh(s), Bone::Calf(s), Bone::Foot(s)].map(|b| seated.bone(b));
-            let ankle = ANKLES[s].lerp(GALLOP_ANKLES[s], half);
-            reach(&mut transforms, pelvis, leg, ankle, KNEE_POLE[s]);
-            if let (Some(thigh), Some(calf)) = (
-                get(&transforms, Bone::Thigh(s)),
-                get(&transforms, Bone::Calf(s)),
-            ) {
-                let shin = pelvis.then(&thigh).then(&calf);
-                turn_bone(&mut transforms, shin, seated.bone(Bone::Foot(s)), heel);
-            }
-        }
-        // La mano de las riendas sigue la boca del caballo (más en medio
-        // asiento: los codos se abren cuando la cabeza va hacia adelante y
-        // hacia abajo); la mano libre descansa junto al muslo, acompañando al
-        // asiento.
-        let follow = FOLLOW.0 + (FOLLOW.1 - FOLLOW.0) * half;
-        // Folded over a jump the hand gives rein along the crest
-        // ([`JUMP_HAND`]) instead of following the mouth: henry lifts his head
-        // up and back over the top, and following it would pull the hand back.
-        let slack = slack.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest) * (1.0 - fold);
-        let reins = REINS_HAND
-            .lerp(GALLOP_HANDS[0], half)
-            .lerp(POMMEL_HAND, rest);
-        let free = free_hand(
-            &mut m,
-            (rise, pitch, roll),
-            (walking, gallop, braking, rest),
-            dt,
-        );
-        // Going into the half-seat the right hand comes to the left one and
-        // takes its rein (half way in), then both part to either side of the
-        // crest; coming out, the other way round.
-        let meet = REINS_HAND.lerp(GALLOP_HANDS[0], 0.5) + MEET;
-        let right = if half < 0.5 {
-            (seat + free).lerp(meet, half * 2.0)
-        } else {
-            meet.lerp(GALLOP_HANDS[1], half * 2.0 - 1.0)
-        };
-        // Over a jump both hands give rein forward along the crest.
-        let release = slack + JUMP_HAND * fold;
-        let hands = [
-            reins + release,
-            right + release * (2.0 * half - 1.0).max(0.0),
-        ];
-        // The right rein in the right hand once both hands are on the reins.
-        // Checked every frame (written only when it differs), so a missed
-        // frame or a scene created again never leaves it in the wrong hand.
-        if let Ok(tack) = tacks.get(riding.horse)
-            && let Ok(mut rein) = straps.get_mut(tack.reins[1])
-        {
-            let end = rein_end(seated, 1, half > 0.5);
-            if rein.ends[1] != end {
-                rein.ends[1] = end;
-            }
-        }
-        // Los hombros acompañan al torso, con retraso: hacia arriba cuando la
-        // montura baja, hacia adelante cuando cabecea hacia abajo.
-        let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), SHRUG_EASE, dt);
-        // Where the left (rein) hand goes, once worked out: the right one
-        // meets it there.
-        let mut left_hand = None;
-        for s in 0..2 {
-            let side = if s == 0 { 1.0 } else { -1.0 };
-            if let Ok(mut t) = transforms.get_mut(seated.bone(Bone::Clavicle(s))) {
-                t.rotation = seated.clavicles[s];
-            }
-            turn_bone(
-                &mut transforms,
-                chest,
-                seated.bone(Bone::Clavicle(s)),
-                Quat::from_rotation_x(0.5 * shrug) * Quat::from_rotation_z(side * shrug),
+            let get = |t: &Bones, b: Bone| t.get(seated.bone(b)).copied().ok();
+            let root = Place::IDENTITY.then(&root);
+            // El asiento. Al paso se sienta hondo en el recado; en medio
+            // asiento flota por encima de él, adelantado sobre las rodillas, sin
+            // acompañar el rebote de la montura: lo absorben las piernas. Nunca
+            // por debajo del asiento.
+            // Al aterrizar las rodillas y las caderas ceden, y el asiento baja
+            // hasta la montura (nunca dentro de ella).
+            let hover = (HALF_SEAT.y - rise).clamp(0.0, HALF_SEAT.y * 2.0)
+                * (1.0 - LANDING_GIVE.1 * give).max(0.0);
+            let seat = Vec3::new(0.0, half * hover, half * HALF_SEAT.z);
+            let period = SHIFT.0 + (riding.seed % SHIFT.1) as f32;
+            let shift = Quat::from_rotation_z(
+                SHIFT.2 * rest * (std::f32::consts::TAU * m.clock / period).sin(),
             );
-            let Some(clavicle) = get(&transforms, Bone::Clavicle(s)) else {
+            // Una espalda recta: la inclinación está sobre todo en las caderas.
+            let tip = Quat::from_rotation_x(HIP_SHARE * lean) * shift;
+            if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
+                pelvis.translation = root.rotation.inverse() * (seat - root.translation);
+                pelvis.rotation =
+                    (root.rotation.inverse() * tip * root.rotation * pelvis.rotation).normalize();
+            }
+            let Some(pelvis) = get(&transforms, Bone::Pelvis) else {
                 continue;
             };
-            let shoulder = chest.then(&clavicle);
-            let (Some(upper), Some(lower), Some(wrist)) = (
-                get(&transforms, Bone::UpperArm(s)),
-                get(&transforms, Bone::LowerArm(s)),
-                get(&transforms, Bone::Hand(s)),
-            ) else {
+            let pelvis = root.then(&pelvis);
+            // La columna: el resto de la inclinación, compensando la montura con
+            // retraso.
+            let counter = |share: f32| {
+                into_rider(
+                    Quat::from_rotation_z(-share * counter_pitch)
+                        * Quat::from_rotation_x(share * counter_roll),
+                    frame,
+                )
+            };
+            turn_bone(
+                &mut transforms,
+                pelvis,
+                seated.bone(Bone::Spine1),
+                Quat::from_rotation_x((1.0 - HIP_SHARE) * lean) * counter(0.6),
+            );
+            let Some(spine1) = get(&transforms, Bone::Spine1) else {
                 continue;
             };
-            let fit = *m.arms[s].get_or_insert((
-                shoulder.then(&upper).translation,
-                lower.translation.length() + wrist.translation.length(),
-            ));
-            let arm = [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
-            let mut target = clear_of_chest(fit_hand(hands[s], s, fit), chest.translation, half);
-            match left_hand {
-                None => left_hand = Some(target),
-                Some(left) => target = meet_left(target, left, half),
-            }
-            reach(
+            let spine1 = pelvis.then(&spine1);
+            let flex = (FLEX * rise * (1.0 - half)).clamp(-FLEX_MAX, FLEX_MAX);
+            turn_bone(
                 &mut transforms,
-                shoulder,
-                arm,
-                within_reach(
-                    target,
+                spine1,
+                seated.bone(Bone::Spine2),
+                Quat::from_rotation_x(flex) * counter(0.4),
+            );
+            let mut chest = spine1;
+            for b in [Bone::Spine2, Bone::Spine3] {
+                if let Some(t) = get(&transforms, b) {
+                    chest = chest.then(&t);
+                }
+            }
+            // La cabeza nivelada y mirando hacia adelante (como la tenía al
+            // sentarse), estabilizada con un leve retraso, y mirando a su alrededor
+            // estando quieto.
+            let (Some(neck), Some(skull)) =
+                (get(&transforms, Bone::Neck), get(&transforms, Bone::Head))
+            else {
+                continue;
+            };
+            let up = frame * chest.then(&neck).then(&skull).rotation * Vec3::Y;
+            let nodding = up.x.atan2(up.y);
+            if !m.head_primed {
+                m.head0 = nodding;
+                m.head_primed = true;
+            }
+            let off_level = nodding - m.head0;
+            // La mayor parte enseguida y el resto con un leve retraso: estable, no
+            // rígida.
+            let level = 0.85 * off_level + 0.15 * m.head.step(off_level, HEAD_EASE, dt);
+            let glance = 0.5 * rest * pampa_core::pose::glance(riding.seed, m.clock);
+            let nod = |share: f32| {
+                Quat::from_rotation_y(glance)
+                    * into_rider(Quat::from_rotation_z(share * level), frame)
+            };
+            turn_bone(&mut transforms, chest, seated.bone(Bone::Neck), nod(0.5));
+            if let Some(neck) = get(&transforms, Bone::Neck) {
+                turn_bone(
+                    &mut transforms,
+                    chest.then(&neck),
+                    seated.bone(Bone::Head),
+                    nod(0.5),
+                );
+            }
+            // Las piernas hacia los estribos, con los talones abajo en medio
+            // asiento y más a medida que el asiento baja sobre ellos.
+            let heel = Quat::from_rotation_x(-half * (HEEL + 2.0 * (HALF_SEAT.y - hover).max(0.0)));
+            for s in 0..2 {
+                let leg = [Bone::Thigh(s), Bone::Calf(s), Bone::Foot(s)].map(|b| seated.bone(b));
+                let ankle = ANKLES[s].lerp(GALLOP_ANKLES[s], half);
+                reach(&mut transforms, pelvis, leg, ankle, KNEE_POLE[s]);
+                if let (Some(thigh), Some(calf)) = (
+                    get(&transforms, Bone::Thigh(s)),
+                    get(&transforms, Bone::Calf(s)),
+                ) {
+                    let shin = pelvis.then(&thigh).then(&calf);
+                    turn_bone(&mut transforms, shin, seated.bone(Bone::Foot(s)), heel);
+                }
+            }
+            // La mano de las riendas sigue la boca del caballo (más en medio
+            // asiento: los codos se abren cuando la cabeza va hacia adelante y
+            // hacia abajo); la mano libre descansa junto al muslo, acompañando al
+            // asiento.
+            let follow = FOLLOW.0 + (FOLLOW.1 - FOLLOW.0) * half;
+            // Folded over a jump the hand gives rein along the crest
+            // ([`JUMP_HAND`]) instead of following the mouth: henry lifts his head
+            // up and back over the top, and following it would pull the hand back.
+            let slack = slack.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest) * (1.0 - fold);
+            let reins = REINS_HAND
+                .lerp(GALLOP_HANDS[0], half)
+                .lerp(POMMEL_HAND, rest);
+            let free = free_hand(
+                &mut m,
+                (rise, pitch, roll),
+                (walking, gallop, braking, rest),
+                dt,
+            );
+            // Going into the half-seat the right hand comes to the left one and
+            // takes its rein (half way in), then both part to either side of the
+            // crest; coming out, the other way round.
+            let meet = REINS_HAND.lerp(GALLOP_HANDS[0], 0.5) + MEET;
+            let right = if half < 0.5 {
+                (seat + free).lerp(meet, half * 2.0)
+            } else {
+                meet.lerp(GALLOP_HANDS[1], half * 2.0 - 1.0)
+            };
+            // Over a jump both hands give rein forward along the crest.
+            let release = slack + JUMP_HAND * fold;
+            let hands = [
+                reins + release,
+                right + release * (2.0 * half - 1.0).max(0.0),
+            ];
+            // The right rein in the right hand once both hands are on the reins.
+            // Checked every frame (written only when it differs), so a missed
+            // frame or a scene created again never leaves it in the wrong hand.
+            if let Ok(tack) = tacks.get(riding.horse)
+                && let Ok(mut rein) = straps.get_mut(tack.reins[1])
+            {
+                let end = rein_end(seated, 1, half > 0.5);
+                if rein.ends[1] != end {
+                    rein.ends[1] = end;
+                }
+            }
+            // Los hombros acompañan al torso, con retraso: hacia arriba cuando la
+            // montura baja, hacia adelante cuando cabecea hacia abajo.
+            let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), SHRUG_EASE, dt);
+            // Where the left (rein) hand goes, once worked out: the right one
+            // meets it there.
+            let mut left_hand = None;
+            for s in 0..2 {
+                let side = if s == 0 { 1.0 } else { -1.0 };
+                if let Ok(mut t) = transforms.get_mut(seated.bone(Bone::Clavicle(s))) {
+                    t.rotation = seated.clavicles[s];
+                }
+                turn_bone(
+                    &mut transforms,
+                    chest,
+                    seated.bone(Bone::Clavicle(s)),
+                    Quat::from_rotation_x(0.5 * shrug) * Quat::from_rotation_z(side * shrug),
+                );
+                let Some(clavicle) = get(&transforms, Bone::Clavicle(s)) else {
+                    continue;
+                };
+                let shoulder = chest.then(&clavicle);
+                let (Some(upper), Some(lower), Some(wrist)) = (
+                    get(&transforms, Bone::UpperArm(s)),
+                    get(&transforms, Bone::LowerArm(s)),
+                    get(&transforms, Bone::Hand(s)),
+                ) else {
+                    continue;
+                };
+                let fit = *m.arms[s].get_or_insert((
                     shoulder.then(&upper).translation,
-                    fit.1,
-                    REACH.0 + (REACH.1 - REACH.0) * half,
-                ),
-                ELBOW_POLE[s],
-            );
-        }
-        // The free hand opens out of the reins clip's fist, closing again as
-        // it comes to take the right rein going into the half-seat.
-        let open = LOOSE_HAND * (1.0 - 2.0 * half).clamp(0.0, 1.0);
-        let (wrist, fingers) = &seated.loose;
-        for (bone, rest) in std::iter::once((seated.bone(Bone::Hand(1)), wrist))
-            .chain(fingers.iter().map(|(bone, rest)| (*bone, rest)))
-        {
-            if let Ok(mut t) = transforms.get_mut(bone) {
-                t.rotation = t.rotation.slerp(*rest, open);
+                    lower.translation.length() + wrist.translation.length(),
+                ));
+                let arm =
+                    [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
+                let mut target =
+                    clear_of_chest(fit_hand(hands[s], s, fit), chest.translation, half);
+                match left_hand {
+                    None => left_hand = Some(target),
+                    Some(left) => target = meet_left(target, left, half),
+                }
+                reach(
+                    &mut transforms,
+                    shoulder,
+                    arm,
+                    within_reach(
+                        target,
+                        shoulder.then(&upper).translation,
+                        fit.1,
+                        REACH.0 + (REACH.1 - REACH.0) * half,
+                    ),
+                    ELBOW_POLE[s],
+                );
+            }
+            // The free hand opens out of the reins clip's fist, closing again as
+            // it comes to take the right rein going into the half-seat.
+            let open = LOOSE_HAND * (1.0 - 2.0 * half).clamp(0.0, 1.0);
+            let (wrist, fingers) = &seated.loose;
+            for (bone, rest) in std::iter::once((seated.bone(Bone::Hand(1)), wrist))
+                .chain(fingers.iter().map(|(bone, rest)| (*bone, rest)))
+            {
+                if let Ok(mut t) = transforms.get_mut(bone) {
+                    t.rotation = t.rotation.slerp(*rest, open);
+                }
             }
         }
     }
@@ -1427,6 +1664,7 @@ pub(super) fn spawn_riders(
         };
         commands.entity(carrier).try_insert(Saddle {
             torso: chain(tack.torso),
+            croup: chain(tack.croup),
             head: chain(tack.head),
             bit: tack.bit,
             rest: tack.torso_rest.to_scale_rotation_translation().1,
@@ -1451,6 +1689,70 @@ pub(super) fn spawn_riders(
                 ChildOf(tack.torso),
             ));
         }
+    }
+}
+
+/// Sienta o baja a quien va en ancas ([`Pillion`]) en el caballo de cada
+/// personaje montado: un asiento sobre la grupa ([`PILLION_SEAT`]) bajo su
+/// hueso ([`Tack::croup`]), que la sigue en cada andar, y su modelo encima, oculto hasta que se
+/// sienta. Lo vuelve a sentar si cambia quién es o si la escena del caballo
+/// se creó de nuevo, y lo baja cuando se quita el [`Pillion`]. Un caballo sin
+/// jinete no lleva a nadie en ancas.
+pub(super) fn seat_pillions(
+    mut commands: Commands,
+    characters: Option<Res<CharacterModels>>,
+    horses: Query<(Entity, &HorseBody, &Tack, &ChildOf, Option<&PillionSeat>)>,
+    pillions: Query<&Pillion>,
+) {
+    for (carrier, body, tack, person, seated) in &horses {
+        let want = pillions
+            .get(person.parent())
+            .ok()
+            .filter(|_| body.rider.is_some())
+            .map(|p| p.0);
+        match (want, seated) {
+            (None, None) => continue,
+            (Some(kind), Some(s)) if s.kind == kind && s.croup == tack.croup => continue,
+            _ => {}
+        }
+        if let Some(s) = seated {
+            commands.entity(s.seat).try_despawn();
+            commands.entity(carrier).remove::<PillionSeat>();
+        }
+        let Some(kind) = want else {
+            continue;
+        };
+        let Some(scene) = characters.as_ref().and_then(|c| c.of(kind)).cloned() else {
+            continue;
+        };
+        let seat = commands
+            .spawn((
+                Name::new("Pillion seat"),
+                transform_of(tack.croup_rest.inverse() * Affine3A::from_translation(PILLION_SEAT)),
+                Visibility::default(),
+                ChildOf(tack.croup),
+            ))
+            .id();
+        commands.spawn((
+            Name::new("Pillion model"),
+            CharacterModel,
+            ModelPending(scene),
+            Riding {
+                horse: seat,
+                kind,
+                // Otra semilla que la del jinete: no se mueven a la par.
+                seed: body.seed.wrapping_mul(31).wrapping_add(7),
+            },
+            Behind(carrier),
+            transform_of(pillion_transform()),
+            Visibility::Hidden,
+            ChildOf(seat),
+        ));
+        commands.entity(carrier).try_insert(PillionSeat {
+            kind,
+            seat,
+            croup: tack.croup,
+        });
     }
 }
 
@@ -1791,6 +2093,81 @@ pub(crate) mod tests {
         *world.get_mut::<GlobalTransform>(foot).unwrap() = GlobalTransform::from_xyz(9.0, 9.0, 9.0);
         world.run_system_once(carry_stirrups).unwrap();
         assert!(place(&world).1.distance(Vec3::new(0.2, 0.65, 0.02)) < 1e-5);
+    }
+
+    #[test]
+    fn a_pillion_follows_the_rider_the_croup_and_a_new_horse() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut people = CharacterModels::default();
+        people.0.insert("bairoletto", Handle::default());
+        world.insert_resource(people);
+        let me = world.spawn(Pillion(FigureKind::Bairoletto)).id();
+        let horse = |world: &mut World| {
+            let croup = world.spawn_empty().id();
+            let tack = Tack {
+                reins: [Entity::PLACEHOLDER; 2],
+                stirrups: [Entity::PLACEHOLDER; 2],
+                torso: croup,
+                head: Entity::PLACEHOLDER,
+                seat: Vec3::ZERO,
+                torso_rest: Affine3A::IDENTITY,
+                bit: Vec3::ZERO,
+                croup,
+                croup_rest: Affine3A::IDENTITY,
+            };
+            let body = HorseBody {
+                coat: Coat::Bayo,
+                rider: Some(FigureKind::Protagonist),
+                saddled: true,
+                gait: pampa_core::HorseGait::Idle,
+                gallop: 0.0,
+                speed: 0.0,
+                flight: None,
+                seed: 3,
+            };
+            let carrier = world.spawn((body, tack, ChildOf(me))).id();
+            // La grupa es un hueso de la escena del caballo.
+            world.entity_mut(croup).insert(ChildOf(carrier));
+            carrier
+        };
+        // Su asiento colgado de la grupa, con su modelo encima, y nadie más.
+        let seat = |world: &mut World, carrier: Entity| {
+            world.run_system_once(seat_pillions).unwrap();
+            let models: Vec<_> = world
+                .query::<(&Behind, &ChildOf)>()
+                .iter(world)
+                .map(|(b, c)| (b.0, c.parent()))
+                .collect();
+            let seat = world.get::<PillionSeat>(carrier).map(|s| s.seat);
+            if let Some(seat) = seat {
+                let croup = world.get::<Tack>(carrier).unwrap().croup;
+                assert_eq!(world.get::<ChildOf>(seat).unwrap().parent(), croup);
+                assert_eq!(models, [(carrier, seat)]);
+            } else {
+                assert!(models.is_empty(), "{models:?}");
+            }
+            seat
+        };
+        let first = horse(&mut world);
+        let on = seat(&mut world, first).expect("he sits behind the rider");
+        // Sin jinete se baja; con el jinete otra vez, vuelve a subir.
+        world.get_mut::<HorseBody>(first).unwrap().rider = None;
+        assert_eq!(seat(&mut world, first), None);
+        assert!(world.get_entity(on).is_err());
+        world.get_mut::<HorseBody>(first).unwrap().rider = Some(FigureKind::Protagonist);
+        let on = seat(&mut world, first).expect("he gets back on");
+        // La escena del caballo creada de nuevo: otra grupa, otro asiento.
+        let croup = world.spawn(ChildOf(first)).id();
+        world.get_mut::<Tack>(first).unwrap().croup = croup;
+        let again = seat(&mut world, first).expect("he sits on the new croup");
+        assert_ne!(again, on);
+        assert!(world.get_entity(on).is_err());
+        // Al bajarse el jugador se va el caballo; al volver a subir, en otro
+        // caballo, sigue en ancas.
+        world.entity_mut(first).despawn();
+        let second = horse(&mut world);
+        seat(&mut world, second).expect("he rides behind again");
     }
 
     // --- con el caballo y el jinete incluidos --------------------------------
@@ -2888,5 +3265,171 @@ pub(crate) mod tests {
                 "{speed} m/s: the poncho {deepest} m into an arm"
             );
         }
+    }
+
+    /// Si `e` es `ancestor` o cuelga de él.
+    fn under(world: &World, mut e: Entity, ancestor: Entity) -> bool {
+        loop {
+            if e == ancestor {
+                return true;
+            }
+            let Some(parent) = world.get::<ChildOf>(e) else {
+                return false;
+            };
+            e = parent.parent();
+        }
+    }
+
+    #[test]
+    fn a_pillion_sits_on_the_croup_behind_the_rider_and_gets_off() {
+        let (mut app, me) = seated(
+            CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::Bayo,
+            },
+            0.0,
+        );
+        app.world_mut()
+            .entity_mut(me)
+            .insert(Pillion(FigureKind::Bairoletto));
+        let pillion = (0..3000)
+            .find_map(|_| {
+                app.update();
+                let world = app.world_mut();
+                let found = world
+                    .query_filtered::<(Entity, &Rig), With<Behind>>()
+                    .iter(world)
+                    .find(|(_, r)| r.started)
+                    .map(|(e, _)| e);
+                if found.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                found
+            })
+            .expect("the pillion never sat");
+        let world = app.world_mut();
+        let carrier = world.get::<Children>(me).unwrap()[0];
+        let tack = *world.get::<Tack>(carrier).unwrap();
+        // Sobre su asiento, colgado de la grupa del caballo, y sin riendas:
+        // siguen en la mano del jinete.
+        let riding = *world.get::<Riding>(pillion).unwrap();
+        let seated = world.get::<Seated>(pillion).unwrap().clone();
+        assert_eq!(riding.kind, FigureKind::Bairoletto);
+        assert_eq!(
+            world.get::<ChildOf>(pillion).unwrap().parent(),
+            riding.horse
+        );
+        assert_eq!(
+            world.get::<ChildOf>(riding.horse).unwrap().parent(),
+            tack.croup
+        );
+        assert_eq!(
+            world.get::<Name>(tack.croup).unwrap().as_str(),
+            crate::character::bones::HorseJoint::Croup.name()
+        );
+        let front = world
+            .query_filtered::<Entity, (With<Riding>, Without<Behind>)>()
+            .single(world)
+            .unwrap();
+        let waist = world.get::<Seated>(front).unwrap().bone(Bone::Spine1);
+        let arms = [Bone::UpperArm(0), Bone::UpperArm(1)].map(|b| seated.bone(b));
+        let reins = world.get::<Strap>(tack.reins[0]).unwrap().ends[1].0;
+        assert!(under(world, reins, front), "the reins stay with the rider");
+        // Parado, al paso y al galope: sobre la piel de la grupa (la tela de
+        // la bombacha apenas contra el cuero, como el jinete en la lana);
+        // pegado al jinete sin entrar en él, salvo los brazos, que lo abrazan,
+        // con las muñecas en su faja (por celdas de 5 cm, el ala del sombrero
+        // apoyada en su hombro derecho cuenta hasta 1.9 cm al galope; sin
+        // enderezarse contra la grupa entraba 6 cm); y con los hombros sobre
+        // el pecho, no echados atrás. El tiempo es simulado: la carga solo
+        // cambia en qué fase del jinete se sienta, y en 21 fases (un segundo,
+        // más de dos trancos de galope) el ala no pasó de 1.9 cm.
+        for speed in [0.0, 1.6, 8.0] {
+            ride(&mut app, me, speed);
+            let (mut sunk, mut gap) = (f32::MAX, f32::MAX);
+            let (mut grip, mut shoulders) = (0.0f32, f32::MAX);
+            for _ in 0..60 {
+                app.update();
+                let world = app.world_mut();
+                let body = world
+                    .get::<GlobalTransform>(carrier)
+                    .unwrap()
+                    .affine()
+                    .inverse();
+                // Las muñecas en la cintura del jinete, y los hombros sobre el
+                // pecho, no detrás (en el espacio del modelo: +Z al frente).
+                let global = |e: Entity| world.get::<GlobalTransform>(e).unwrap().affine();
+                let (rider, spine) = (global(front), global(waist).translation);
+                let mine = global(pillion).inverse();
+                let chest =
+                    mine.transform_point3(global(seated.bone(Bone::Spine3)).translation.into());
+                for (s, at) in PILLION_HOLD.iter().enumerate() {
+                    let hold = rider
+                        .transform_point3(rider.inverse().transform_point3(spine.into()) + *at);
+                    let wrist = global(seated.bone(Bone::Hand(s))).translation;
+                    grip = grip.max(hold.distance(wrist.into()));
+                    let shoulder = global(seated.bone(Bone::UpperArm(s))).translation;
+                    shoulders = shoulders.min(mine.transform_point3(shoulder.into()).z - chest.z);
+                }
+                let drawn = crate::character::tack::tests::drawn_on_their_joints(world, me);
+                let (skin, tris) = horse_skin(&drawn);
+                let near = crate::character::tack::tests::Near::new(&skin, &tris);
+                // Por celdas de 5 cm de alto y de ancho: lo más adelante del de
+                // ancas y lo más atrás del jinete, a lo largo del caballo.
+                let mut ahead = std::collections::HashMap::<(i32, i32), f32>::new();
+                let mut rear = std::collections::HashMap::<(i32, i32), f32>::new();
+                for d in &drawn {
+                    let back = under(world, d.entity, pillion);
+                    if !back && !under(world, d.entity, front) {
+                        continue;
+                    }
+                    for (k, p) in d.positions.iter().enumerate().step_by(3) {
+                        let q = body.transform_point3(*p);
+                        let band = ((q.y / 0.05).floor() as i32, (q.z / 0.05).floor() as i32);
+                        // Los brazos lo abrazan: van por delante a propósito.
+                        let arm = d.strongest[k]
+                            .is_some_and(|j| arms.iter().any(|a| under(world, j, *a)));
+                        if back {
+                            if !arm {
+                                let a = ahead.entry(band).or_insert(f32::MIN);
+                                *a = a.max(q.x);
+                            }
+                            if let Some(s) = near.signed_distance(*p) {
+                                sunk = sunk.min(s);
+                            }
+                        } else {
+                            let r = rear.entry(band).or_insert(f32::MAX);
+                            *r = r.min(q.x);
+                        }
+                    }
+                }
+                for (band, a) in &ahead {
+                    if let Some(r) = rear.get(band) {
+                        gap = gap.min(r - a);
+                    }
+                }
+            }
+            println!(
+                "{speed} m/s: the pillion {sunk:.3} m from the skin, {gap:.3} m behind the rider, wrists {grip:.3} m from the waist, shoulders {shoulders:.3} m ahead of the chest",
+            );
+            assert!(sunk > -0.015, "{speed} m/s: {sunk} m into the horse");
+            assert!(gap > -0.025, "{speed} m/s: {gap} m into the rider");
+            assert!(
+                grip < 0.04,
+                "{speed} m/s: the wrists {grip} m off the waist"
+            );
+            assert!(
+                shoulders > 0.05,
+                "{speed} m/s: the shoulders {shoulders} m ahead of the chest"
+            );
+        }
+        // Al quitarlo se baja: ni su modelo ni su asiento.
+        app.world_mut().entity_mut(me).remove::<Pillion>();
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Behind>().iter(world).count(), 0);
+        assert!(world.get::<PillionSeat>(carrier).is_none());
+        assert!(world.get_entity(riding.horse).is_err());
     }
 }
