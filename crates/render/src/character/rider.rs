@@ -169,7 +169,8 @@ pub const PILLION_RISE: f32 = 0.15;
 
 /// Adónde van los tobillos de quien va en ancas, primero el izquierdo y
 /// después el derecho, desde la pelvis (espacio del jinete): colgando sueltos
-/// a los costados de la panza, un poco más adelante que las caderas.
+/// a los costados de la panza, un poco más adelante que las caderas. Llevados
+/// a sus piernas como [`ANKLES`] ([`fit_ankle`]).
 pub const PILLION_ANKLES: [Vec3; 2] = [Vec3::new(0.40, -0.66, 0.06), Vec3::new(-0.40, -0.66, 0.06)];
 
 /// Qué parte del cabeceo y del rolido de la grupa (henry galopa con el lomo
@@ -211,7 +212,8 @@ pub fn pillion_transform() -> Affine3A {
 /// lado (el costillar está a 0.23 m de la columna en su parte más ancha, y las
 /// piernas abrazan el recado: los bastos y el cojinillo, medidos con
 /// `tack::tests::seat_clearances`), 10 cm adelante, con las suelas de las botas
-/// unos 12 cm por debajo de la panza.
+/// unos 12 cm por debajo de la panza. Medidos sobre piernas de [`REF_LEG`]:
+/// cada jinete los lleva a las suyas ([`fit_ankle`]).
 pub const ANKLES: [Vec3; 2] = [Vec3::new(0.37, -0.69, 0.1), Vec3::new(-0.37, -0.69, 0.1)];
 
 /// Adónde van los tobillos en medio asiento: los estribos acortados un palmo
@@ -222,6 +224,25 @@ pub const ANKLES: [Vec3; 2] = [Vec3::new(0.37, -0.69, 0.1), Vec3::new(-0.37, -0.
 /// ~135° (129° already on the old horse); now ~111-115°, the boots at most
 /// 1.4 cm into the wool (`FLEECE_GIVE` 2 cm).
 pub const GALLOP_ANKLES: [Vec3; 2] = [Vec3::new(0.40, -0.52, 0.1), Vec3::new(-0.40, -0.52, 0.1)];
+
+/// How long the legs (hip to ankle) are, in metres, of the body the ankle
+/// targets ([`ANKLES`], [`GALLOP_ANKLES`], [`PILLION_ANKLES`]) were measured
+/// on: the protagonist before the period heights (1.81 m tall). Each rider
+/// takes them to his own legs ([`fit_ankle`]).
+pub const REF_LEG: f32 = 0.796;
+
+/// An ankle target measured on [`REF_LEG`] brought to a rider whose legs are
+/// `leg` long: as far out to the side (the horse is as wide), and down and
+/// forward of the pelvis by the scale of his legs, so a shorter rider does not
+/// lock his knees straight reaching for it. An unknown `leg` (not a positive
+/// number) keeps it.
+pub fn fit_ankle(target: Vec3, leg: f32) -> Vec3 {
+    if !leg.is_finite() || leg <= 0.0 {
+        return target;
+    }
+    let k = leg / REF_LEG;
+    Vec3::new(target.x, target.y * k, target.z * k)
+}
 
 /// Adónde va la muñeca de la mano de las riendas (la izquierda: un gaucho monta
 /// con una sola mano, con ambas riendas en ella): delante de la cabezada, un
@@ -1011,7 +1032,13 @@ fn sit_on_bench(transforms: &mut Bones, seated: &Seated, on_bench: bool, rise: f
 /// ([`PILLION_HOLD`]); sin jinete, las manos quedan en el regazo, como en el
 /// clip. Pegado a su espalda, se dobla hacia la derecha en el pecho y asoma
 /// la cara junto a su hombro ([`PILLION_ASIDE`]).
-fn straddle(transforms: &mut Bones, seated: &Seated, tilt: Quat, hold: Option<[Vec3; 2]>) {
+fn straddle(
+    transforms: &mut Bones,
+    seated: &Seated,
+    tilt: Quat,
+    hold: Option<[Vec3; 2]>,
+    leg_length: f32,
+) {
     let get = |transforms: &Bones, bone: Bone| transforms.get(seated.bone(bone)).ok().copied();
     let Some(root) = get(transforms, Bone::Root) else {
         return;
@@ -1035,7 +1062,7 @@ fn straddle(transforms: &mut Bones, seated: &Seated, tilt: Quat, hold: Option<[V
             transforms,
             pelvis,
             leg,
-            PILLION_ANKLES[s],
+            fit_ankle(PILLION_ANKLES[s], leg_length),
             PILLION_KNEE_POLE[s],
         );
     }
@@ -1232,7 +1259,8 @@ pub(super) fn pose_riders(
                                 .map(|h| mine.transform_point3(front.transform_point3(waist + h))),
                         )
                     });
-                    straddle(&mut transforms, seated, tilt, hold);
+                    let leg_length = rig.pelvis.map_or(0.0, |(_, _, leg)| leg);
+                    straddle(&mut transforms, seated, tilt, hold, leg_length);
                 }
                 if on_bench {
                     // Gira la cabeza hacia lo que mira, si mira algo.
@@ -1453,9 +1481,10 @@ pub(super) fn pose_riders(
             // Las piernas hacia los estribos, con los talones abajo en medio
             // asiento y más a medida que el asiento baja sobre ellos.
             let heel = Quat::from_rotation_x(-half * (HEEL + 2.0 * (HALF_SEAT.y - hover).max(0.0)));
+            let leg_length = rig.pelvis.map_or(0.0, |(_, _, leg)| leg);
             for s in 0..2 {
                 let leg = [Bone::Thigh(s), Bone::Calf(s), Bone::Foot(s)].map(|b| seated.bone(b));
-                let ankle = ANKLES[s].lerp(GALLOP_ANKLES[s], half);
+                let ankle = fit_ankle(ANKLES[s].lerp(GALLOP_ANKLES[s], half), leg_length);
                 reach(&mut transforms, pelvis, leg, ankle, KNEE_POLE[s]);
                 if let (Some(thigh), Some(calf)) = (
                     get(&transforms, Bone::Thigh(s)),
@@ -1913,6 +1942,15 @@ pub(crate) mod tests {
                 .angle_between(Quat::from_mat3a(&want.matrix3))
                 < 1e-5
         );
+    }
+
+    #[test]
+    fn a_shorter_riders_ankles_go_as_far_out_but_higher_and_less_forward() {
+        let ankle = ANKLES[0];
+        assert_eq!(fit_ankle(ankle, REF_LEG), ankle);
+        let short = fit_ankle(ankle, REF_LEG * 0.9);
+        assert!(short.distance(Vec3::new(ankle.x, ankle.y * 0.9, ankle.z * 0.9)) < 1e-6);
+        assert_eq!(fit_ankle(ankle, 0.0), ankle, "unknown legs");
     }
 
     #[test]
@@ -2505,8 +2543,11 @@ pub(crate) mod tests {
         // 0.1 -> 0.02 m (H6, L35-L38): at the gallop the hands already stay
         // 0.3 m in front of the chest, and with both on the reins (S9) the
         // left one starts further out, so they have less forward to go
-        // (measured +0.03..+0.09 m).
-        assert!(mean(top, 2) > reach + 0.02, "{} vs {reach}", mean(top, 2));
+        // (measured +0.03..+0.09 m). 0.02 -> 0.01 m with the period heights:
+        // the protagonist at 1.71 m, his arms shorter, gains +0.018..+0.07 m
+        // depending on the gallop phase the jump starts in (the fold itself
+        // unchanged, ~40° over the top against ~19°).
+        assert!(mean(top, 2) > reach + 0.01, "{} vs {reach}", mean(top, 2));
         // Enderezándose para aterrizar, y después siguiendo en medio asiento.
         assert!(sitting < lean - 6.0, "{sitting} vs {lean}");
         assert!((mean(&landing[60..], 0) - lean).abs() < 4.0);
