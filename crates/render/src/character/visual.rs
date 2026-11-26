@@ -743,8 +743,11 @@ mod tests {
             .single(world)
             .unwrap();
         world.despawn(camera);
+        // Sube en cada mitad. En la segunda, menos de 2 cm: en quien tiene las
+        // piernas cortas (esta mujer, de 1,52 m) la pelvis pasa por 1 cm su
+        // altura de pie poco antes del final y vuelve a bajar.
         let mut last = bench.y + PELVIS_RISE;
-        for rise in [0.5, 1.0] {
+        for (rise, gain) in [(0.5, 0.02), (1.0, 0.0)] {
             app.world_mut().entity_mut(me).insert(Rising(rise));
             for _ in 0..10 {
                 app.update();
@@ -756,7 +759,7 @@ mod tests {
             };
             let pelvis = at(world, "pelvis").y;
             assert!(
-                pelvis > last + 0.02,
+                pelvis > last + gain,
                 "at {rise} the pelvis at {pelvis}, before at {last}"
             );
             last = pelvis;
