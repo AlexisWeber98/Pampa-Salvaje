@@ -48,7 +48,7 @@ python3 -I tools/mh2gltf.py assets/characters/farach/farach.mhm -o assets/charac
 python3 -I tools/mh2gltf.py --check assets/characters/farach/model.gltf
 ```
 
-El protagonista es la excepción: su cuerpo es el `Sports_Male_01` de Rocketbox ya puesto en el esqueleto `game_engine` (en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, fuera del repositorio), y `tools/dress.py` lo viste con las líneas `piece` de `protagonist.mhm`, con el mismo código de prendas, y telas de Poly Haven (ver `tools/README.md`). `--scale 0.938` lleva el cuerpo de 1,81 m a 1,71 m:
+El protagonista es la excepción: su cuerpo es el `Sports_Male_01` de Rocketbox ya puesto en el esqueleto `game_engine` (en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, fuera del repositorio), y `tools/dress.py` lo viste con las líneas `piece` de `protagonist.mhm`, con el mismo código de prendas, y telas de Poly Haven (ver `tools/README.md`). `--scale 0.938` baja la articulación de la cabeza de 1,606 a 1,507 m: una estatura (cabeza + 0,20 m) de 1,81 a 1,71 m. Se calcula con la cabeza y no con la estatura, porque los 0,20 m hasta la coronilla también se achican:
 
 ```sh
 python3 -I tools/dress.py ~/Documents/pampa-prototipos/protagonista_rocketbox/protagonista.gltf \

@@ -189,7 +189,7 @@ def read_body(g, rig, scale=1.0):
     attrs = prims[0].get("attributes", {})
     if any(p.get("attributes") != attrs or p.get("mode", 4) != 4 for p in prims):
         raise M.ConvertError("body: its primitives must be triangles sharing one vertex layout")
-    pos = g.read(attrs.get("POSITION"), "VEC3", {5126}) * (scale / M.METERS)
+    pos = g.read(attrs.get("POSITION"), "VEC3", {5126}) / M.METERS * scale
     n = len(pos)
     uv = g.read(attrs.get("TEXCOORD_0"), "VEC2", {5126})
     uv[:, 1] = 1.0 - uv[:, 1]  # MakeHuman's V runs up; write() flips it back
@@ -329,7 +329,8 @@ def main(argv=None):
     parser.add_argument("--fabrics", metavar="DIR", help="Poly Haven fabrics for the cloth (see mh2gltf --fabrics)")
     parser.add_argument("--max-texture", type=int, default=2048, help="largest side of every texture (default 2048)")
     parser.add_argument("--scale", type=float, default=1.0,
-                        help="resize the body before dressing it, e.g. 0.938 for 1.81 m to 1.71 m (0.5..1.5, default 1)")
+                        help="resize the body before dressing it (0.5..1.5, default 1); e.g. 0.938 lowers the "
+                        "Rocketbox head joint from 1.606 to 1.507 m, a stature (head joint + 0.20 m) of 1.71 m")
     args = parser.parse_args(argv)
     if np is None:
         parser.error("numpy is required")

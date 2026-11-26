@@ -204,7 +204,7 @@ python3 -I tools/dress.py BODY.gltf OUTFIT.mhm -o OUTPUT_FOLDER [--fabrics DIR] 
 
 `--scale S` (0.5 a 1.5, por defecto 1) agranda o achica el cuerpo y sus articulaciones por igual apenas se lee, antes de calzarle las prendas, así que la ropa se ajusta al cuerpo ya escalado. Con 1, la salida es la misma que sin la opción, byte por byte.
 
-El protagonista se rehace así (cuerpo en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, telas en `~/Downloads/polyhaven/`). El cuerpo de Rocketbox mide 1,81 m; `--scale 0.938` lo deja en 1,71 m (la articulación de la cabeza baja de 1,606 a 1,507 m, ver `measure.py`):
+El protagonista se rehace así (cuerpo en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, telas en `~/Downloads/polyhaven/`). El cuerpo de Rocketbox mide 1,81 m; `--scale 0.938` lo deja en 1,71 m (la articulación de la cabeza baja de 1,606 a 1,507 m, ver `measure.py`; la escala sale de la cabeza, 1,506 / 1,606, y no de la estatura, porque los 0,20 m hasta la coronilla también se achican):
 
 ```sh
 python3 -I tools/dress.py ~/Documents/pampa-prototipos/protagonista_rocketbox/protagonista.gltf \
