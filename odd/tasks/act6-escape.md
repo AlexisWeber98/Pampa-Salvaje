@@ -1,0 +1,35 @@
+# Act 6: the escape from La Colonia
+
+Objective: play Act 6 of `historia` ("El desconocido parte 2"): Bairoletto at La Colonia's door at night, the shot inside, the escape with him "en ancas", the milicada's chase to the monte, and the pay.
+Branch: `feat/act6-escape`. Delivery: the user commits (no agent commits); one part per session. Tests: `cargo test` capped with `systemd-run --user --scope -p MemoryMax=<available − 4G>` and `--test-threads=2`; focused tests while iterating, one full check at the end.
+
+## Specs
+
+- **S1** (`historia`, Act 6, verbatim): "En la noche. En la pulpería “La colonia” Bairoletto te espera afuera en la puerta." / "Bairoletto: Bien pibe, ¡viniste! Esperame dos minutos que compro algo adentro y ya nos vamos." / "Procede a entrar y luego de unos segundos se escucha un disparo, gritos y tumulto." / "Bairoletto sale corriendo y se sube a tu caballo." / "Bairoletto: ¡Dale pibe arrancá pal monte que nos sigue la milicada!" / "Lisandro: ¡¿Pero qué hiciste?!" / "Bairoletto: ¡Le hice un agujero en el cuello al canalla del comisario! ¡jaja!" / "(Persecución, Bairoletto dispara y grita como un loco.)" / "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!" / "Al llegar al monte. Bairoletto se baja del caballo." / "Bairoletto: Buen trabajo Pibe, como te lo prometí, acá tenes tu pago. (Se le suma $ 1,50 al jugador)" / "Si necesitas Laburo buscame en el rancho “La Esmeralda” fuera de Castex, que tengo más trabajos para vos."
+- **S2** (user, 2026-11-12, todo.md): "Bairoletto paga $ 1 (antes $ 1,50)". The pay is $ 1, not the $ 1,50 of `historia`.
+- **S3** (todo.md): "Necesita armas (por ahora solo disparos de NPC) y NPCs perseguidores." Only NPCs shoot for now; the player has no weapon.
+- **S4** (user, 2026-11-26, verbatim choice): "Se puede perder (Recomendado)": if a milico catches up and stays alongside for a few seconds, they are caught: a "Te agarraron" screen, and the act restarts when Bairoletto runs out of the pulpería.
+- **S5** Part 1 assumptions, to review:
+  - After Act 4 the objective reads "Volvé de noche a La Colonia, a caballo" and the map marker points at La Colonia's door. From 20:00 Bairoletto stands on the porch outside the front door, facing the street; before 20:00 he is not there.
+  - The scene starts by itself when the player, mounted, comes within a few metres of him (on foot it does not start: he needs the horse). Control locks, the horse reins in, the two face each other and his line plays.
+  - He walks in through the front door. If the pulpería is shut (after 22:00) the door opens for him. A few seconds later the shot, the shouts and the tumult play as subtitles ("[Un disparo]", "[Gritos y tumulto]") until the sound part.
+  - He runs out to the horse and sits "en ancas" (`Pillion`); his two lines and Lisandro's play, then control returns and the objective reads "Escapá al monte" with the marker on the nearest monte.
+  - The monte is the nearest point to Castex, outside the town, where `FloraSite::monte` reaches 0.5 (the felines' threshold). The act ends when the player rides within 30 m of it.
+  - "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!" is shouted while he shoots, so it goes with part 3 (T3).
+  - At the monte the horse reins in, he gets off (the pillion is removed) and stands beside the horse, says his two lines, the player earns $ 1, and he fades out like at the end of Act 4. The story is `Done` again.
+  - Farach stays at the comisaría door for now (the story kills him off later; not in this part).
+
+## Tasks
+
+- T1 [S1, S2, S5] Part 1, the story skeleton: Bairoletto at the door at night, the scene, the shot as subtitles, the pillion, the objective to the monte, the pay. No chasers, no gunfire. Route: inline (one unit, no writer reason). Status: written and tested (L5); to be seen in game. Uncommitted (the user commits).
+- T2 [S1, S3] Part 2, the milicada: a mounted police figure and riders that chase the player from the pulpería. Status: pending.
+- T3 [S1, S3] Part 3, the gunfire: Bairoletto shoots from the croup (arm, muzzle flash) and yells; the sound of the shot and the tumult (asset download needs the user's permission). Status: pending.
+- T4 [S4] Part 4, getting caught: the "Te agarraron" screen and the restart from Bairoletto running out. Status: pending.
+
+## Log
+
+- L1 (2026-11-26) user: "seguimos con el acto 6".
+- L2 (2026-11-26) mapping: the story ends at `Done` after Act 4 and is not saved; `Pillion` can be inserted from game code; weapon items and the `Weapons` ability are names only; no gunfire, damage, effect sounds, pursuit AI, police figure or nearest-monte search exist.
+- L3 (2026-11-26) user chose "Se puede perder (Recomendado)" (S4). Split into four parts, one per session.
+- L4 (2026-11-26) T1 written, not yet compiled: only 3-4 GB RAM free, and the standing rule keeps 4 GB for the system. Core: `Goal::Rendezvous`/`Hideout`, `Cue` (Enter, Pause, Caption, RunToHorse, GetOff, Leave), `Errand::porch/waits_at_door/rendezvous/reach_hideout/place/with_hideout`, `FloraSite::nearest_monte`; content parser and builtin; `errand.ron` Act 6 steps; render: an unnamed subtitle has no "name: " prefix; game: `escape.rs` (find_hideout, wait_at_door, set_off, stage_cues, run_scripted), `Talk::cue`, `HeldOpen` door, `Roaming` excluded from town despawn. Core tests added (rendezvous, hideout, nearest_monte), subtitle test extended. Pending: compile, the game-side Act 6 test, docs (dialogue README, module docs), full check.
+- L5 (2026-11-26) RAM freed by the user; T1 compiled and tested. Fixes found by the tests: during Act 4's own scene the stage is already `Rendezvous`, so Bairoletto's standing must not switch to the porch by stage (now only `Errand::place` moves him); the escape systems ignore a seated Bairoletto. New tests: core `at_night_bairoletto_waits_at_the_door_and_the_act_starts_only_on_horseback`, `the_escape_ends_within_reach_of_the_monte_and_bairoletto_stays_where_he_got_off`, flora `the_nearest_monte_is_dense_beyond_the_given_radius_and_nothing_closer_is` (strengthened to 12 origins after two sabotages passed), content `the_shipped_file_tells_acts_two_to_six_in_order_and_amadeo_apart`, game `at_night_bairoletto_rides_off_en_ancas_to_the_monte_pays_a_peso_and_leaves`; subtitle test covers an unnamed line; three Act 4 tests now expect `Rendezvous` after Act 4. Sabotages: 13 run, each failed its test (the on-foot rule is covered by the core test). The world's `find_hideout` glue has no test (the test app has no flora; it sets the monte directly).

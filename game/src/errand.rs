@@ -10,7 +10,10 @@
 //! que el jugador pasa por su puesto de quesos (a una cuadra de la pulpería, en
 //! cualquier momento del juego), el Viejo Amadeo lo llama ([`hail`]), Lisandro
 //! se le acerca (a caballo, frenando) y Amadeo le regala un pedazo. En cada
-//! escena los dos que hablan se miran ([`face_each_other`]).
+//! escena los dos que hablan se miran ([`face_each_other`]). El acto 6 (de
+//! noche, la huida al monte con Bairoletto en ancas) lo pone en escena
+//! [`crate::escape`]: sus indicaciones ([`Cue`]) detienen la escena hasta
+//! cumplirse ([`Talk::cue`]).
 //!
 //! Una vez tomado, el caballo es del jugador: F detenido o al paso lento lo
 //! hace bajar y lo deja atado flojo donde está ([`LooseHorse`]), y F junto a él
@@ -23,7 +26,7 @@
 //!
 //! `pampa-core` es dueño de las reglas ([`Errand`]): quién está dónde, los
 //! pasos de la historia y qué está al alcance. Los pasos son datos, en
-//! `assets/dialogue/errand.ron` (actos 2 a 5 de `historia`). Este módulo lee
+//! `assets/dialogue/errand.ron` (actos 2 a 6 de `historia`). Este módulo lee
 //! la tecla de interacción ([`INTERACT_KEY`]), reproduce la escena de cada
 //! paso cumplido: sus líneas como subtítulos ([`Subtitle`]) con el nombre de
 //! quien habla, cada una el tiempo de leerla, y sus acciones narradas (la
@@ -36,7 +39,7 @@
 use bevy::prelude::*;
 use pampa_content::{ERRAND_FILE, ErrandLines, asset_path, load_errand_or_builtin};
 use pampa_core::{
-    Ability, Beat, Errand, ErrandEvent, Heading, Interaction, MAX_STEP, Npc, Rider, Speaker,
+    Ability, Beat, Cue, Errand, ErrandEvent, Heading, Interaction, MAX_STEP, Npc, Rider, Speaker,
     TownLayout, Travel, World,
 };
 use pampa_render::character::{GAZE_MAX, Gaze, Rising};
@@ -112,6 +115,9 @@ pub struct Talk {
     /// Cuánto lleva la escena esperando a que Lisandro llegue, en segundos:
     /// pasado [`APPROACH_SECONDS`] (algo lo traba), sigue sin él.
     pub waited: f32,
+    /// La indicación de puesta en escena en curso ([`Cue`]): la escena espera
+    /// a que [`crate::escape`] la cumpla y la quite.
+    pub cue: Option<Cue>,
 }
 
 impl Talk {
@@ -146,6 +152,7 @@ impl Talk {
             partner: None,
             walk_to: Vec::new(),
             waited: 0.0,
+            cue: None,
         }
     }
 
@@ -245,6 +252,7 @@ impl Plugin for ErrandPlugin {
             .init_resource::<ControlLock>()
             .init_resource::<WalkPath>()
             .init_resource::<Approach>()
+            .init_resource::<crate::pulperia::HeldOpen>()
             .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
             .init_resource::<pampa_render::MapReach>()
@@ -260,8 +268,13 @@ impl Plugin for ErrandPlugin {
                 Update,
                 (
                     hail,
+                    crate::escape::find_hideout,
+                    crate::escape::wait_at_door,
+                    crate::escape::set_off,
                     interact,
                     converse,
+                    crate::escape::stage_cues,
+                    crate::escape::run_scripted,
                     see_off,
                     frame_scene,
                     face_each_other,
@@ -566,6 +579,8 @@ pub(crate) fn interact(
             *saddle.coat = Coat::HIDALGO;
             saddle.ride(me, &mut player.rider, &mut transform, &horse);
         }
+        // Empiezan solos, al llegar ([`crate::escape::set_off`]).
+        ErrandEvent::Rendezvous | ErrandEvent::ReachedHideout => {}
     }
 }
 
@@ -709,6 +724,9 @@ impl Saddle<'_, '_, '_> {
 /// las cosas del protagonista al llegar a ellas, y borra el subtítulo cuando
 /// termina. Terminada la primera línea, si Lisandro tiene que ir a su lugar
 /// para hablar ([`Talk::walk_to`]), camina hasta ahí y la escena lo espera.
+/// Una indicación de puesta en escena ([`Cue`]) la espera hasta que se cumple
+/// ([`Talk::cue`]); lo que se oye va como subtítulo sin nombre, y una pausa
+/// deja la pantalla sin subtítulo.
 fn converse(
     time: Res<Time>,
     mut conversation: ResMut<Conversation>,
@@ -719,6 +737,9 @@ fn converse(
     let Some(talk) = conversation.0.as_mut() else {
         return;
     };
+    if talk.cue.is_some() {
+        return;
+    }
     let dt = time.delta_secs().min(MAX_STEP);
     if talk.partner.is_some() && path.walking() {
         talk.waited += dt;
@@ -752,6 +773,27 @@ fn converse(
                     speaker: speaker.name().to_string(),
                     text,
                 });
+                return;
+            }
+            Beat::Cue(Cue::Caption(text)) => {
+                talk.wait = subtitle::duration(&text);
+                talk.speaker = None;
+                subtitle.0 = Some(SubtitleLine {
+                    speaker: String::new(),
+                    text,
+                });
+                return;
+            }
+            Beat::Cue(Cue::Pause(seconds)) => {
+                talk.wait = f32::from(seconds);
+                talk.speaker = None;
+                subtitle.0 = None;
+                return;
+            }
+            Beat::Cue(cue) => {
+                talk.speaker = None;
+                subtitle.0 = None;
+                talk.cue = Some(cue);
                 return;
             }
         }
@@ -1128,7 +1170,7 @@ mod tests {
             .iter()
             .filter_map(|beat| match beat {
                 Beat::Line { speaker, text } => Some((speaker.name().to_string(), text.clone())),
-                Beat::Act(_) => None,
+                Beat::Act(_) | Beat::Cue(_) => None,
             })
             .collect()
     }
@@ -1333,13 +1375,12 @@ mod tests {
         let aisle = inside.way_out(e.bairoletto_seat().unwrap())[2];
         teleport(&mut app, aisle);
         press_f(&mut app);
-        // Con el acto 4 la historia termina (S18: el Viejo Amadeo no es un
-        // paso).
-        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        // Después del acto 4 sigue el 6, a la noche (S18: el Viejo Amadeo no
+        // es un paso).
+        assert_eq!(errand(&app).stage(), ErrandStage::Rendezvous);
         wait_for_scene(&mut app, 3);
         assert!(said(&app).ends_with(&scene_lines(3)));
-        assert_eq!(objective(&app), None);
-        assert_eq!(app.world().resource::<MapTarget>().0, None);
+        assert_eq!(objective(&app), shipped_objective(4));
 
         // El Viejo Amadeo lo llama al pasar, aunque la historia ya terminó:
         // Lisandro se le acerca y se encuentran.
@@ -1354,7 +1395,7 @@ mod tests {
         let lines: Vec<String> = amadeo_lines().into_iter().map(|(_, t)| t).collect();
         wait_for_lines(&mut app, &lines);
         assert!(said(&app).ends_with(&amadeo_lines()));
-        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        assert_eq!(errand(&app).stage(), ErrandStage::Rendezvous);
 
         // Cada paso ocurrió una sola vez.
         press_f(&mut app);
@@ -1427,6 +1468,134 @@ mod tests {
         assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Bairoletto));
     }
 
+    /// Lo que muestra la escena del paso `step` de la historia incluida, en
+    /// orden: sus líneas con el nombre de quien habla, y lo que se oye, sin
+    /// nombre.
+    fn scene_shown(step: usize) -> Vec<(String, String)> {
+        shipped_lines().steps[step]
+            .scene
+            .iter()
+            .filter_map(|beat| match beat {
+                Beat::Line { speaker, text } => Some((speaker.name().to_string(), text.clone())),
+                Beat::Cue(Cue::Caption(text)) => Some((String::new(), text.clone())),
+                Beat::Act(_) | Beat::Cue(_) => None,
+            })
+            .collect()
+    }
+
+    /// Pone el reloj a las `hour` en punto.
+    fn set_hour(app: &mut App, hour: f64) {
+        let time = pampa_core::TimeOfDay::from_seconds(hour * 3600.0);
+        app.insert_resource(WorldClock(pampa_core::GameClock::at(time)));
+    }
+
+    /// Hace correr la escena en curso hasta que termina, como mucho `seconds`.
+    fn play_out(app: &mut App, seconds: f32, mut each: impl FnMut(&mut App)) {
+        for _ in 0..(seconds / 0.05) as usize {
+            if app.world().resource::<Conversation>().0.is_none() {
+                return;
+            }
+            app.update();
+            each(app);
+        }
+        panic!("the scene did not end in {seconds} s");
+    }
+
+    #[test]
+    fn at_night_bairoletto_rides_off_en_ancas_to_the_monte_pays_a_peso_and_leaves() {
+        let mut app = shipped_app();
+        ride_to_farach(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
+        // Solo el acto 6, con el monte a mano.
+        let steps = shipped_lines().steps[4..].to_vec();
+        let porch = errand(&app).porch().unwrap();
+        let monte = porch.position + porch.heading.forward() * 200.0;
+        {
+            let mut run = app.world_mut().resource_mut::<ErrandRun>();
+            run.0 = run.0.clone().with_story(steps).with_hideout(monte);
+        }
+        activate_around(&mut app, porch.position);
+        let tano_at_door = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query::<(&StandingNpc, &CharacterVisual, &Transform)>();
+            q.iter(app.world())
+                .find(|(n, v, _)| {
+                    n.npc == Npc::Bairoletto && matches!(v, CharacterVisual::Figure(_))
+                })
+                .map(|(_, _, t)| GroundVec2::new(t.translation.x, -t.translation.z))
+        };
+        // De día no está, y el HUD y el mapa mandan a la puerta.
+        set_hour(&mut app, 15.0);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(tano_at_door(&mut app), None);
+        assert_eq!(objective(&app), shipped_objective(4));
+        assert_eq!(app.world().resource::<MapTarget>().0, Some(porch.position));
+        // De noche espera parado en la vereda, frente a la puerta.
+        set_hour(&mut app, 21.0);
+        for _ in 0..3 {
+            app.update();
+        }
+        let at = tano_at_door(&mut app).expect("waits at the door at night");
+        assert!(at.distance(porch.position) < 1e-3);
+
+        // Llegando a caballo hasta él empieza la escena, sin apretar nada.
+        let before = said(&app).len();
+        teleport(&mut app, porch.position + porch.heading.forward() * 5.0);
+        app.update();
+        assert!(app.world().resource::<ControlLock>().0);
+        let town = porch.town;
+        let mut held = false;
+        play_out(&mut app, 90.0, |app| {
+            held |= app.world().resource::<crate::pulperia::HeldOpen>().0 == Some(town);
+        });
+        // Habla, entra, se oye el disparo y el tumulto, sale y se sube en
+        // ancas: todo tal como está en errand.ron, con la puerta abierta.
+        assert_eq!(said(&app)[before..].to_vec(), scene_shown(4));
+        assert!(held, "La Colonia stays open while he goes in and out");
+        let me = player(&mut app).0;
+        assert_eq!(
+            app.world().get::<pampa_render::Pillion>(me),
+            Some(&pampa_render::Pillion(FigureKind::Bairoletto))
+        );
+        assert_eq!(tano_at_door(&mut app), None);
+        // Libre otra vez, rumbo al monte.
+        app.update();
+        assert!(!app.world().resource::<ControlLock>().0);
+        assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
+        assert_eq!(objective(&app), shipped_objective(5));
+        assert_eq!(app.world().resource::<MapTarget>().0, Some(monte));
+
+        // En el monte se baja, le paga $ 1 y se va hasta perderse.
+        let paid = wallet(&app);
+        let before = said(&app).len();
+        teleport(&mut app, monte + GroundVec2::new(10.0, 0.0));
+        app.update();
+        play_out(&mut app, 60.0, |_| {});
+        assert_eq!(said(&app)[before..].to_vec(), scene_shown(5));
+        assert_eq!(wallet(&app), Money::new(paid.0 / 100 + 1, paid.0 % 100));
+        assert_eq!(app.world().get::<pampa_render::Pillion>(me), None);
+        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        assert_eq!(
+            (objective(&app), app.world().resource::<MapTarget>().0),
+            (None, None)
+        );
+        let gone = |app: &mut App| {
+            let mut q = app.world_mut().query::<&crate::escape::Scripted>();
+            q.iter(app.world()).count() == 0
+        };
+        for _ in 0..200 {
+            if gone(&mut app) {
+                break;
+            }
+            app.update();
+        }
+        assert!(gone(&mut app), "he walks off and fades away");
+        assert_eq!(tano_at_door(&mut app), None);
+    }
+
     /// El mundo incluido con el pueblo `town` activo y el resto no, como si el
     /// jugador estuviera parado en `at`.
     fn activate_around(app: &mut App, at: GroundVec2) {
@@ -1480,11 +1649,12 @@ mod tests {
         wait_for_scene(&mut app, 3);
         let lines = said(&app)[before..].to_vec();
         assert_eq!(lines, scene_lines(3));
-        // Libre hasta la noche: la historia termina con el acto 4 (S18: el
-        // Viejo Amadeo ya no es un paso).
-        assert_eq!(errand(&app).stage(), ErrandStage::Done);
-        assert_eq!(objective(&app), None);
-        assert_eq!(app.world().resource::<MapTarget>().0, None);
+        // Libre hasta la noche: el acto 6 espera en la puerta de La Colonia
+        // (S18: el Viejo Amadeo ya no es un paso).
+        assert_eq!(errand(&app).stage(), ErrandStage::Rendezvous);
+        assert_eq!(objective(&app), shipped_objective(4));
+        let porch = errand(&app).porch().unwrap().position;
+        assert_eq!(app.world().resource::<MapTarget>().0, Some(porch));
 
         // Se levanta del banco, sin moverse de su lugar.
         app.update();
@@ -1629,7 +1799,7 @@ mod tests {
             .iter()
             .filter_map(|beat| match beat {
                 Beat::Line { speaker, text } => Some((speaker.name().to_string(), text.clone())),
-                Beat::Act(_) => None,
+                Beat::Act(_) | Beat::Cue(_) => None,
             })
             .collect()
     }

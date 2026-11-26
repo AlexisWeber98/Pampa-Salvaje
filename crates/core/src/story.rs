@@ -1,8 +1,9 @@
 //! La historia como datos: una lista ordenada de pasos ([`Step`]). Cada paso
 //! pide algo al jugador ([`Goal`]: hablar con alguien, tomar el caballo) y, al
 //! cumplirlo, reproduce su escena ([`Beat`]s): líneas dichas por quien
-//! corresponda, y acciones narradas que suceden en el juego ([`Action`]: le
-//! dan plata, recibe o entrega algo).
+//! corresponda, acciones narradas que suceden en el juego ([`Action`]: le
+//! dan plata, recibe o entrega algo) e indicaciones de puesta en escena
+//! ([`Cue`]: alguien entra, se oye un disparo, se sube en ancas).
 //!
 //! Los pasos los escribe el guion (`assets/dialogue/errand.ron`); estas son
 //! solo las piezas y sus reglas. El orden y el avance los lleva
@@ -54,13 +55,35 @@ impl Action {
     }
 }
 
-/// Un momento de una escena: una línea o una acción.
+/// Una indicación de puesta en escena: algo que hacen los personajes, o que se
+/// oye, entre las líneas. La escena espera a que termine antes de seguir.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Cue {
+    /// Bairoletto entra a la pulpería por la puerta y se pierde adentro.
+    Enter,
+    /// Pasan tantos segundos sin que nadie hable.
+    Pause(u8),
+    /// Se oye algo, escrito entre corchetes como subtítulo sin nombre (por
+    /// ahora el disparo y el tumulto no tienen sonido).
+    Caption(String),
+    /// Bairoletto sale corriendo de la pulpería y se sube en ancas al caballo
+    /// de Lisandro.
+    RunToHorse,
+    /// Bairoletto se baja de las ancas y queda parado junto al caballo.
+    GetOff,
+    /// Bairoletto se aleja caminando y se pierde de vista.
+    Leave,
+}
+
+/// Un momento de una escena: una línea, una acción o una indicación.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Beat {
     /// `speaker` dice `text`, como subtítulo.
     Line { speaker: Speaker, text: String },
     /// Sucede una acción.
     Act(Action),
+    /// Sucede algo en escena ([`Cue`]).
+    Cue(Cue),
 }
 
 /// Lo que un paso de la historia pide al jugador.
@@ -70,6 +93,11 @@ pub enum Goal {
     Talk(Npc),
     /// Montar el caballo que presta Don Hidalgo.
     TakeHorse,
+    /// Volver de noche, a caballo, a la puerta de la pulpería de Bairoletto,
+    /// donde él espera parado (acto 6).
+    Rendezvous,
+    /// Llegar al monte más cercano al pueblo de Farach (acto 6, la huida).
+    Hideout,
 }
 
 /// Un paso de la historia.

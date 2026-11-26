@@ -429,7 +429,7 @@ fn populate_towns(
     (crowds, towns, active, cast, led_away, horsemen, parked): TownInputs,
     world: Res<GameWorld>,
     mut populated: ResMut<Populated>,
-    residents: Query<Residents>,
+    residents: Query<Residents, Without<crate::escape::Roaming>>,
 ) {
     let Some(crowds) = crowds else {
         return;

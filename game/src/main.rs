@@ -11,6 +11,7 @@ mod sound;
 #[cfg(debug_assertions)]
 mod console;
 mod errand;
+mod escape;
 mod fauna;
 mod first_person;
 mod inventory;

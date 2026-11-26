@@ -101,7 +101,7 @@ pub use settlement::{
     HouseStyle, KeepOut, RoadsideWreck, Settlement, SettlementKind, SettlementLayout, Structure,
     StructureKind, Track,
 };
-pub use story::{Action, Beat, Goal, Speaker, Step};
+pub use story::{Action, Beat, Cue, Goal, Speaker, Step};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
     Building, BuildingKind, Canopy, Floor, HitchingPost, PLAZA_MONUMENT, PLAZA_PATH_CLEARANCE,

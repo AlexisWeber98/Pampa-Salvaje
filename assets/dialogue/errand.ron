@@ -1,4 +1,4 @@
-// La historia del capítulo 1, paso a paso (actos 2 a 5 de `historia`): Don
+// La historia del capítulo 1, paso a paso (actos 2 a 6 de `historia`): Don
 // Hidalgo, en la plaza de Monte Nievas, manda al jugador a ver al comisario
 // Elías Farach en la comisaría de Castex. Ver README.md en esta carpeta para
 // las reglas (pasos, escenas, caracteres, longitud).
@@ -73,6 +73,44 @@
                 Say(Bairoletto, "A la noche te digo, ¿Cómo te llamas?"),
                 Say(Lisandro, "Lisandro."),
                 Say(Bairoletto, "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."),
+            ],
+        ),
+        // Acto 6, palabra por palabra: "En la noche. En la pulpería “La
+        // colonia” Bairoletto te espera afuera en la puerta." Desde las 20,
+        // parado en la vereda frente a la puerta; empieza solo cuando el
+        // jugador llega a caballo hasta él (a pie no: necesita el caballo).
+        // "Procede a entrar y luego de unos segundos se escucha un disparo,
+        // gritos y tumulto. Bairoletto sale corriendo y se sube a tu caballo."
+        // El disparo y el tumulto, por ahora, como subtítulos sin nombre.
+        (
+            goal: Rendezvous,
+            objective: "Volvé de noche a La Colonia, a caballo",
+            scene: [
+                Say(Bairoletto, "Bien pibe, ¡viniste! Esperame dos minutos que compro algo adentro y ya nos vamos."),
+                Enter,
+                Pause(4),
+                Caption("[Un disparo]"),
+                Caption("[Gritos y tumulto]"),
+                RunToHorse,
+                Say(Bairoletto, "¡Dale pibe arrancá pal monte que nos sigue la milicada!"),
+                Say(Lisandro, "¡¿Pero qué hiciste?!"),
+                Say(Bairoletto, "¡Le hice un agujero en el cuello al canalla del comisario! ¡jaja!"),
+            ],
+        ),
+        // "Al llegar al monte. Bairoletto se baja del caballo." El monte más
+        // cercano a Castex, fuera del campo raleado del pueblo. Paga $ 1
+        // (usuario, 2026-11-12; `historia` dice $ 1,50). La línea larga va
+        // cortada en dos en la coma, sin cambiar ninguna palabra.
+        (
+            goal: Hideout,
+            objective: "Escapá al monte",
+            scene: [
+                GetOff,
+                Say(Bairoletto, "Buen trabajo Pibe, como te lo prometí, acá tenes tu pago."),
+                Earn(pesos: 1),
+                Say(Bairoletto, "Si necesitas Laburo buscame en el rancho “La Esmeralda” fuera de Castex,"),
+                Say(Bairoletto, "que tengo más trabajos para vos."),
+                Leave,
             ],
         ),
         // Los actos siguientes se agregan aquí como pasos nuevos.

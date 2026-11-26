@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use pampa_core::{Action, Beat, Goal, Item, Money, Npc, Speaker, Step};
+use pampa_core::{Action, Beat, Cue, Goal, Item, Money, Npc, Speaker, Step};
 use serde::Deserialize;
 
 use crate::ContentError;
@@ -100,6 +100,8 @@ impl From<NpcFile> for Npc {
 enum GoalFile {
     Talk(NpcFile),
     TakeHorse,
+    Rendezvous,
+    Hideout,
 }
 
 /// Quién dice una línea: el protagonista por su nombre, o un personaje.
@@ -129,6 +131,12 @@ enum BeatFile {
     },
     Receive(ItemFile),
     HandOver(ItemFile),
+    Enter,
+    Pause(u8),
+    Caption(String),
+    RunToHorse,
+    GetOff,
+    Leave,
 }
 
 fn item(item: ItemFile) -> Item {
@@ -157,6 +165,12 @@ impl From<BeatFile> for Beat {
             ))),
             BeatFile::Receive(i) => Beat::Act(Action::Receive(item(i))),
             BeatFile::HandOver(i) => Beat::Act(Action::HandOver(item(i))),
+            BeatFile::Enter => Beat::Cue(Cue::Enter),
+            BeatFile::Pause(seconds) => Beat::Cue(Cue::Pause(seconds)),
+            BeatFile::Caption(text) => Beat::Cue(Cue::Caption(text)),
+            BeatFile::RunToHorse => Beat::Cue(Cue::RunToHorse),
+            BeatFile::GetOff => Beat::Cue(Cue::GetOff),
+            BeatFile::Leave => Beat::Cue(Cue::Leave),
         }
     }
 }
@@ -166,6 +180,8 @@ impl From<StepFile> for Step {
         let goal = match step.goal {
             GoalFile::Talk(npc) => Goal::Talk(npc.into()),
             GoalFile::TakeHorse => Goal::TakeHorse,
+            GoalFile::Rendezvous => Goal::Rendezvous,
+            GoalFile::Hideout => Goal::Hideout,
         };
         Self {
             goal,
@@ -252,6 +268,37 @@ impl ErrandLines {
                         ),
                     ],
                 },
+                Step {
+                    goal: Goal::Rendezvous,
+                    objective: Some("Volvé de noche a La Colonia, a caballo".into()),
+                    scene: vec![
+                        say(
+                            Npc::Bairoletto,
+                            "Bien pibe, ¡viniste! Esperame dos minutos que compro algo adentro y ya nos vamos.",
+                        ),
+                        Beat::Cue(Cue::Enter),
+                        Beat::Cue(Cue::Pause(4)),
+                        Beat::Cue(Cue::Caption("[Un disparo]".into())),
+                        Beat::Cue(Cue::RunToHorse),
+                        say(
+                            Npc::Bairoletto,
+                            "¡Dale pibe arrancá pal monte que nos sigue la milicada!",
+                        ),
+                    ],
+                },
+                Step {
+                    goal: Goal::Hideout,
+                    objective: Some("Escapá al monte".into()),
+                    scene: vec![
+                        Beat::Cue(Cue::GetOff),
+                        say(
+                            Npc::Bairoletto,
+                            "Buen trabajo Pibe, como te lo prometí, acá tenes tu pago.",
+                        ),
+                        Beat::Act(Action::Earn(Money::new(1, 0))),
+                        Beat::Cue(Cue::Leave),
+                    ],
+                },
             ],
             amadeo: vec![
                 say(
@@ -336,19 +383,22 @@ impl ErrandLines {
             step.objective
                 .as_deref()
                 .into_iter()
-                .chain(step.scene.iter().filter_map(|beat| match beat {
-                    Beat::Line { text, .. } => Some(text.as_str()),
-                    Beat::Act(_) => None,
-                }))
+                .chain(step.scene.iter().filter_map(shown))
         });
-        let amadeo = self.amadeo.iter().filter_map(|beat| match beat {
-            Beat::Line { text, .. } => Some(text.as_str()),
-            Beat::Act(_) => None,
-        });
+        let amadeo = self.amadeo.iter().filter_map(shown);
         std::iter::once(self.police_town.as_str())
             .chain(self.not_your_horse.iter().map(String::as_str))
             .chain(steps)
             .chain(amadeo)
+    }
+}
+
+/// El texto que muestra `beat`: una línea, o lo que se oye; `None` para una
+/// acción o una indicación sin texto.
+fn shown(beat: &Beat) -> Option<&str> {
+    match beat {
+        Beat::Line { text, .. } | Beat::Cue(Cue::Caption(text)) => Some(text.as_str()),
+        Beat::Act(_) | Beat::Cue(_) => None,
     }
 }
 
@@ -363,11 +413,13 @@ fn check_scene(part: &str, scene: &[Beat]) -> Result<(), ContentError> {
             })
         };
         match beat {
-            Beat::Line { text, .. } => check_line(text).or_else(fail)?,
+            Beat::Line { text, .. } | Beat::Cue(Cue::Caption(text)) => {
+                check_line(text).or_else(fail)?
+            }
             Beat::Act(Action::Earn(amount)) if amount.0 == 0 => {
                 return fail("earns nothing".into());
             }
-            Beat::Act(_) => {}
+            Beat::Act(_) | Beat::Cue(_) => {}
         }
     }
     Ok(())
@@ -408,7 +460,7 @@ mod tests {
             .iter()
             .filter_map(|beat| match beat {
                 Beat::Line { speaker, text } => Some((speaker.name(), text.as_str())),
-                Beat::Act(_) => None,
+                Beat::Act(_) | Beat::Cue(_) => None,
             })
             .collect()
     }
@@ -421,7 +473,7 @@ mod tests {
     const STEP: &str = r#"(goal: Talk(Hidalgo), objective: "o", scene: [Say(Hidalgo, "a")])"#;
 
     #[test]
-    fn the_shipped_file_tells_acts_two_to_four_in_order_and_amadeo_apart() {
+    fn the_shipped_file_tells_acts_two_to_six_in_order_and_amadeo_apart() {
         // Solo la forma de la historia: los textos los escribe el autor en
         // errand.ron y pueden cambiar sin tocar este test.
         let lines = ErrandLines::parse(SHIPPED).expect("shipped errand.ron is valid");
@@ -436,6 +488,8 @@ mod tests {
                 Goal::TakeHorse,
                 Goal::Talk(Npc::Farach),
                 Goal::Talk(Npc::Bairoletto),
+                Goal::Rendezvous,
+                Goal::Hideout,
             ]
         );
         assert_eq!(lines.police_town, "Eduardo Castex");
@@ -445,7 +499,7 @@ mod tests {
                 .iter()
                 .filter_map(|beat| match beat {
                     Beat::Act(action) => Some(*action),
-                    Beat::Line { .. } => None,
+                    Beat::Line { .. } | Beat::Cue(_) => None,
                 })
                 .collect()
         };
@@ -475,6 +529,29 @@ mod tests {
         // Acto 4: solo líneas, entre Bairoletto y Lisandro.
         assert!(acts(&lines.steps[3].scene).is_empty());
         assert_eq!(speakers(&lines.steps[3]), ["Bairoletto", "Lisandro"]);
+        // Acto 6: en la puerta habla, entra, se oye el disparo, sale corriendo
+        // y sube en ancas; en el monte se baja, paga $ 1 (no $ 1,50) y se va.
+        let cues = |scene: &[Beat]| -> Vec<Cue> {
+            scene
+                .iter()
+                .filter_map(|beat| match beat {
+                    Beat::Cue(Cue::Caption(_) | Cue::Pause(_)) => None,
+                    Beat::Cue(cue) => Some(cue.clone()),
+                    Beat::Line { .. } | Beat::Act(_) => None,
+                })
+                .collect()
+        };
+        let door = &lines.steps[4].scene;
+        assert!(acts(door).is_empty());
+        assert_eq!(cues(door), [Cue::Enter, Cue::RunToHorse]);
+        assert!(door.contains(&Beat::Cue(Cue::Caption("[Un disparo]".into()))));
+        assert_eq!(speakers(&lines.steps[4]), ["Bairoletto", "Lisandro"]);
+        let monte = &lines.steps[5].scene;
+        assert_eq!(acts(monte), [Action::Earn(Money::new(1, 0))]);
+        assert_eq!(cues(monte), [Cue::GetOff, Cue::Leave]);
+        assert_eq!(monte.first(), Some(&Beat::Cue(Cue::GetOff)));
+        assert_eq!(monte.last(), Some(&Beat::Cue(Cue::Leave)));
+        assert_eq!(speakers(&lines.steps[5]), ["Bairoletto"]);
         // Acto 5, fuera de la historia (no es un paso): el Viejo Amadeo le
         // regala el queso a Lisandro.
         let amadeo = Step {
