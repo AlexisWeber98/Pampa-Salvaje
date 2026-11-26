@@ -501,8 +501,18 @@ mod tests {
     fn the_skin_is_the_one_makehuman_skin_material_of_each_shipped_model() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/characters");
         let mut models = 0;
+        // Cada carpeta de modelo, y las de una carpeta que reúne varios (los
+        // milicos: `milico/criollo`, ...).
+        let mut folders = Vec::new();
         for entry in std::fs::read_dir(&dir).unwrap() {
-            let file = entry.unwrap().path().join("model.gltf");
+            let path = entry.unwrap().path();
+            if path.is_dir() && !path.join("model.gltf").is_file() {
+                folders.extend(std::fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
+            }
+            folders.push(path);
+        }
+        for folder in folders {
+            let file = folder.join("model.gltf");
             let Ok(gltf) = std::fs::read_to_string(&file) else {
                 continue;
             };
@@ -512,7 +522,7 @@ mod tests {
             assert_eq!(skins.len(), 1, "{}: {names:?}", file.display());
             models += 1;
         }
-        assert!(models >= 9, "{models} models");
+        assert!(models >= 12, "{models} models");
         for skin in [
             "old_caucasian_male_detailed",
             "middleage_cauasian_male",

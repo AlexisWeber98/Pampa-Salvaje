@@ -1009,6 +1009,9 @@ mod tests {
             FigureKind::Protagonist,
             FigureKind::Hidalgo,
             FigureKind::Farach,
+            FigureKind::Milico(0),
+            FigureKind::Milico(1),
+            FigureKind::Milico(2),
         ];
         let (mut app, rigs) = playing(&people, AnimationState::Idle, 0.0);
         let mut lowest = Vec::new();

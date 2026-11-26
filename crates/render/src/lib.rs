@@ -55,7 +55,8 @@ pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, World
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
     CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, EYE_IN_HEAD, FigureKind,
-    Gaze, OWN_HEAD_LAYER, Pillion, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
+    Gaze, MILICO_LOOKS, OWN_HEAD_LAYER, Pillion, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead,
+    VisualPose,
 };
 pub use coords::world_from_ground;
 pub use dust::DustPlugin;

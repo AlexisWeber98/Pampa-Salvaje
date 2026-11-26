@@ -1,0 +1,45 @@
+# A milico (agent of the territorial police of La Pampa) in 1919, the
+# old hand: about 48 (age 0.68), thick-set and heavy, a fleshy face and
+# a double chin, grey eyes, hair going grey (hair.mhmat) and a big
+# drooping grey moustache (the viking moustache, moustache.mhmat), about
+# 1.68 m. The agent's plain uniform, the same for the three milicos (see
+# ../criollo/criollo.mhm).
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece (see ../../README.md). Credits in
+# ../../CREDITS.md.
+version v1.1.1
+name milico_viejo
+modifier macrodetails/Gender 1.000000
+modifier macrodetails/Age 0.677000
+modifier macrodetails/African 0.000000
+modifier macrodetails/Asian 0.100000
+modifier macrodetails/Caucasian 0.900000
+modifier macrodetails-universal/Muscle 0.500000
+modifier macrodetails-universal/Weight 0.720000
+modifier macrodetails-height/Height 0.340000
+modifier macrodetails-proportions/BodyProportions 0.450000
+modifier head/head-fat-decr|incr 0.350000
+modifier head/head-round 0.300000
+modifier neck/neck-double-decr|incr 0.400000
+modifier nose/nose-volume-decr|incr 0.350000
+modifier nose/nose-scale-horiz-decr|incr 0.200000
+skeleton game_engine.mhskel
+skinMaterial skins/middleage_caucasian_male/middleage_caucasian_male.mhmat
+proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/grey.mhmat
+eyebrows eyebrow008 79ea307f-a942-40dd-bf50-bbaa41f02034
+material eyebrow008 79ea307f-a942-40dd-bf50-bbaa41f02034 eyebrows.mhmat
+hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
+material short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8 hair.mhmat
+clothes rehmanpolanski_moustache_viking 6cd3f38f-2522-44e2-afc6-37917b8aba9c
+material rehmanpolanski_moustache_viking 6cd3f38f-2522-44e2-afc6-37917b8aba9c moustache.mhmat
+clothesHideFaces True
+subdivide False
+piece bombacha color=0.10,0.11,0.16 top=4.3 bottom=1.3
+piece boots color=0.05,0.05,0.05 top=2.05
+piece jacket color=0.08,0.09,0.15 top=6.5 vneck=0 skirt=3.0 open=0
+piece rastra color=0.20,0.12,0.06 coin=0.72,0.58,0.30 coins=0 height=0.2
+piece kepi color=0.08,0.09,0.15
+piece buttons count=5 spread=0

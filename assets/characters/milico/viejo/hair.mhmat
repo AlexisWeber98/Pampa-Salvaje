@@ -1,0 +1,10 @@
+# The old milico's hair going grey: short04's strands as grey (see
+# greyscaleTexture in tools/README.md), tinted a dark pepper-and-salt.
+name milico_viejo_hair
+diffuseColor 0.46 0.45 0.43
+specularColor 0.05 0.05 0.05
+shininess 0.5
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/hair/short04/short04_diffuse.png

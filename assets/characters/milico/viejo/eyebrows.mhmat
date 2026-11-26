@@ -1,0 +1,10 @@
+# The old milico's greying eyebrows: eyebrow008's as grey, tinted like his
+# hair.
+name milico_viejo_eyebrows
+diffuseColor 0.42 0.41 0.39
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/eyebrows/eyebrow008/eyebrow008.png

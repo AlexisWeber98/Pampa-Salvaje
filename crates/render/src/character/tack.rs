@@ -3763,6 +3763,45 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn every_milico_rides_clear_of_the_horse_like_the_protagonist() {
+        use crate::character::horse::tests::ride;
+        use crate::character::rider::tests::seated;
+        use crate::character::{MILICO_LOOKS, Riding};
+        // Los milicos que persiguen al jugador: otros cuerpos, con otras
+        // piernas, sobre el mismo recado; el asiento y los estribos se ajustan
+        // a cada uno.
+        for n in 0..MILICO_LOOKS {
+            let kind = FigureKind::Milico(n);
+            let rider = CharacterVisual::Mounted {
+                rider: kind,
+                coat: Coat::Zaino,
+            };
+            let (mut app, me) = seated(rider, 0.0);
+            let world = app.world_mut();
+            let mut riders = world.query::<&Riding>();
+            assert_eq!(riders.single(world).unwrap().kind, kind);
+            for (speed, frames) in [(0.0, 8), (12.2, 12)] {
+                for _ in 0..30 {
+                    ride(&mut app, me, speed);
+                }
+                let (_, seat, _) = clearances(&mut app, me, frames);
+                let (_, fleece) = seat_clearances(&mut app, me, frames);
+                println!(
+                    "{kind:?} at {speed} m/s: {seat:.4} m off the skin, {fleece:.4} m off the fleece"
+                );
+                assert!(
+                    seat > 0.0,
+                    "{kind:?} at {speed} m/s sinks into the horse ({seat})"
+                );
+                assert!(
+                    fleece > -FLEECE_GIVE,
+                    "{kind:?} at {speed} m/s cuts into the fleece ({fleece})"
+                );
+            }
+        }
+    }
+
     /// Las piezas del lomo: el recado modelado y el cinchón, que nunca
     /// siguen al cuello.
     const BACK: [&str; 5] = ["Bastos", "Cojinillo", "Sobrepuesto", "Vellon", "Cinchon"];

@@ -1,0 +1,10 @@
+# The gringo milico's light-brown eyebrows: eyebrow001's as grey, tinted
+# like his hair.
+name milico_gringo_eyebrows
+diffuseColor 0.48 0.37 0.25
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/eyebrows/eyebrow001/eyebrow001.png

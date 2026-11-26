@@ -30,7 +30,7 @@ pub mod visual;
 
 pub use clips::CharacterClips;
 pub use fade::Fading;
-pub use figure::{FigureBody, FigureJoint, FigureKind, FigurePart, TOWNSFOLK_LOOKS};
+pub use figure::{FigureBody, FigureJoint, FigureKind, FigurePart, MILICO_LOOKS, TOWNSFOLK_LOOKS};
 pub use horse::{Coat, HorseBody, HorseBuck, HorseModel, HorseRig};
 pub use model::{CharacterModel, CharacterModels, CharacterModelsShown};
 pub use rider::{Pillion, RiderMotion, Riding, Rising, Saddle, Seated};

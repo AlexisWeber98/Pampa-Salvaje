@@ -349,7 +349,17 @@ pub(crate) mod tests {
             assert!(crate::gltf::is_inside(&path));
             assert!(root().0.join(&path).is_file(), "{path}");
         }
-        assert_eq!(models.0.len(), 4 + OUTFITS.len(), "each folder once");
+        let milicos = crate::character::model::MILICOS;
+        assert_eq!(
+            models.0.len(),
+            4 + OUTFITS.len() + milicos.len(),
+            "each folder once"
+        );
+        // Los milicos igual: tres modelos, cualquiera sea el número.
+        for n in 0..=255u8 {
+            let name = model_name(FigureKind::Milico(n)).unwrap();
+            assert_eq!(name, milicos[(n % super::super::MILICO_LOOKS) as usize]);
+        }
         for look in 0..=255u8 {
             let name = model_name(FigureKind::townsfolk(look)).unwrap();
             assert_eq!(name, OUTFITS[(look % TOWNSFOLK_LOOKS) as usize]);

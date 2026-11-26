@@ -190,7 +190,7 @@ Los datos son locales, pero se leen como entrada no confiable:
 - Los archivos de texto y JSON tienen límites de tamaño, y los números no finitos se rechazan.
 - Los archivos de numpy se cargan con `allow_pickle=False`. Se comprueban el tipo, la forma y el tamaño de cada arreglo, y también cada índice.
 - Las rutas se mantienen dentro de la carpeta de datos o de la carpeta propia del `.mhm`.
-- Los PNG los decodifica el propio script: de 8 o 16 bits, no entrelazados (un PNG entrelazado se rechaza). Deshace sus filtros a lo largo de antidiagonales con numpy.
+- Los PNG los decodifica el propio script: de 8 o 16 bits, planos o entrelazados con Adam7 (algunos assets de la comunidad, como el bigote `rehmanpolanski_moustache_viking` del milico veterano y las cejas `eyebrow009` a `eyebrow011`, vienen entrelazados: sus siete pasadas se decodifican cada una por su lado y se vuelven a entretejer). Deshace sus filtros a lo largo de antidiagonales con numpy.
 
 Una entrada incorrecta recibe un error de una línea. Cualquier otra excepción es un bug y conserva su traceback.
 
