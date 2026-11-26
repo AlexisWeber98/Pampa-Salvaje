@@ -17,7 +17,7 @@ Branch: `feat/period-heights`. Delivery: the user commits (no agent commits). Ru
 | T1 | S2 | inline | done (0949064): `tools/measure.py` + `tools/test_measure.py` (RED observed, both tests sabotaged), README section |
 | T2 | S1, S3 | inline | done (993a2d7): 8 `.mhm` lowered and rebuilt, headscarf at 1.52 (L7) |
 | T3 | S1, S3 | inline | done (5fbd802; review fixes L11 in b80376e): `dress.py --scale`, protagonist at 0.938 = 1.71 m (L8-L10) |
-| T4 | S4 | inline | done (uncommitted, L12): `fit_ankle` takes `ANKLES`/`GALLOP_ANKLES`/`PILLION_ANKLES` to each rider's leg (`REF_LEG` 0.796); jump reach assert 0.02 → 0.01 m |
+| T4 | S4 | inline | done (956bc44, L12): `fit_ankle` takes `ANKLES`/`GALLOP_ANKLES`/`PILLION_ANKLES` to each rider's leg (`REF_LEG` 0.796); jump reach assert 0.02 → 0.01 m |
 | T5 | S4 | inline | full suite + in-game check (stirrups, reins, pillion, first person, benches, playback rates < 2.0) |
 
 ## Log
