@@ -199,14 +199,16 @@ Una entrada incorrecta recibe un error de una línea. Cualquier otra excepción 
 Viste un cuerpo con skinning, ya puesto en el esqueleto `game_engine` (como el protagonista de Rocketbox, `Sports_Male_01`), con un atuendo de `.mhm` (sus líneas `piece`), usando el mismo código de prendas de `mh2gltf.py`, y escribe el glTF del juego. Necesita Python 3 con numpy, y la carpeta *data* de MakeHuman solo para el orden de los huesos (`rigs/game_engine.mhskel`; `--data`, si no `$MAKEHUMAN_DATA`). Hay que ejecutarlo aislado:
 
 ```sh
-python3 -I tools/dress.py BODY.gltf OUTFIT.mhm -o OUTPUT_FOLDER [--fabrics DIR] [--max-texture N]
+python3 -I tools/dress.py BODY.gltf OUTFIT.mhm -o OUTPUT_FOLDER [--fabrics DIR] [--max-texture N] [--scale S]
 ```
 
-El protagonista se rehace así (cuerpo en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, telas en `~/Downloads/polyhaven/`):
+`--scale S` (0.5 a 1.5, por defecto 1) agranda o achica el cuerpo y sus articulaciones por igual apenas se lee, antes de calzarle las prendas, así que la ropa se ajusta al cuerpo ya escalado. Con 1, la salida es la misma que sin la opción, byte por byte.
+
+El protagonista se rehace así (cuerpo en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, telas en `~/Downloads/polyhaven/`). El cuerpo de Rocketbox mide 1,81 m; `--scale 0.938` lo deja en 1,71 m (la articulación de la cabeza baja de 1,606 a 1,507 m, ver `measure.py`; la escala sale de la cabeza, 1,506 / 1,606, y no de la estatura, porque los 0,20 m hasta la coronilla también se achican):
 
 ```sh
 python3 -I tools/dress.py ~/Documents/pampa-prototipos/protagonista_rocketbox/protagonista.gltf \
-    assets/characters/protagonist/protagonist.mhm -o assets/characters/protagonist --fabrics ~/Downloads/polyhaven
+    assets/characters/protagonist/protagonist.mhm -o assets/characters/protagonist --fabrics ~/Downloads/polyhaven --scale 0.938
 python3 -I tools/mh2gltf.py --check assets/characters/protagonist/model.gltf
 ```
 
@@ -219,6 +221,15 @@ El cuerpo es un `.gltf` con su `.bin` y sus PNG al lado: una mesh con skinning c
 Costo, para el protagonista: 9,486 triángulos (piel 4,572, de los que 2,786 quedan bajo la ropa y no se escriben; camisa 988, chaleco 558, bombacha 754, botas 798, poncho 1,072, sombrero 460, cinta 40, pañuelo 68, faja 80, rastra 40, monedas 56) y 53 articulaciones. Texturas: los cuatro mapas de piel de 2048 px del cuerpo, y con `--fabrics` seis de tela de 2048 px (color y normal de algodón, lana y cuero), unos 54 MB de PNG en total; `poncho.png` y `stripe.png` siguen siendo de 64 px. Tarda unos 2 minutos y medio, casi todo en codificar los PNG de 2K.
 
 Trata el cuerpo como entrada no confiable: tamaños acotados, cada accessor dentro de su buffer, cada índice y articulación comprobados, números finitos, y cada archivo que nombra (buffers e imágenes) un nombre simple dentro de la carpeta del cuerpo. Una entrada incorrecta recibe un error de una línea. La salida es determinista: las mismas entradas dan los mismos bytes.
+
+## `measure.py`: la estatura de los personajes
+
+Mide los modelos que escriben `mh2gltf.py` y `dress.py` a partir de la pose de reposo del esqueleto: la altura de las articulaciones `pelvis` y `head`, el largo de la pierna (muslo a pantorrilla más pantorrilla a pie, del lado izquierdo) y la estatura estimada sin sombrero, que es la articulación de la cabeza más 0,20 m (±3 cm). No lee la malla, así que el sombrero o el peinado nunca cuentan.
+
+```sh
+python3 -I tools/measure.py assets/characters/*/model.gltf
+python3 -I -B -m unittest discover -s tools -p test_measure.py
+```
 
 ## `glbtrim.py`: recortar GLB animados
 

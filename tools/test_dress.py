@@ -19,6 +19,8 @@ try:
 except ImportError:  # pragma: no cover
     np = None
 
+DATA = os.path.realpath(os.path.expanduser(os.environ.get("MAKEHUMAN_DATA") or dress.M.DEFAULT_DATA))
+
 
 class Rig:
     """A stand-in skeleton: Root, pelvis under it, spine_01 under that."""
@@ -88,6 +90,43 @@ class Body(unittest.TestCase):
         np.testing.assert_allclose(rest["spine_01"][:3, 3], [0, 8.5, 0])
         self.assertEqual(sorted(set(material.values())), [0, 1])
         self.assertEqual(material[skin.triangles[1]], 1)
+
+    def test_a_scale_shrinks_the_body_and_its_joints_alike(self):
+        skin, rest, _ = dress.read_body(self.body(), Rig(), scale=0.5)
+        np.testing.assert_allclose(skin.coords, [[0, 0, 0], [0, 0.5, 0], [0.5, 0, 0], [0.5, 0.5, 0]], atol=1e-6)
+        np.testing.assert_allclose(rest["spine_01"][:3, 3], [0, 4.25, 0])
+        np.testing.assert_allclose(rest["spine_01"][:3, :3], np.identity(3))
+
+    @unittest.skipUnless(os.path.isfile(os.path.join(DATA, "rigs", "game_engine.mhskel")), f"MakeHuman data not found at {DATA}")
+    def test_the_commands_scale_reaches_the_body_it_reads(self):
+        # The stand-in body is not on the whole game skeleton, so the
+        # command stops at reading it; what matters is the scale it read with.
+        mhm = os.path.join(self.tmp.name, "a.mhm")
+        with open(mhm, "w") as f:
+            f.write("version v1.1.1\nskeleton game_engine.mhskel\n")
+        seen = []
+
+        def read_body(g, rig, scale=1.0):
+            seen.append(scale)
+            raise dress.M.ConvertError("stop here")
+
+        real, dress.read_body = dress.read_body, read_body
+        self.addCleanup(setattr, dress, "read_body", real)
+        with redirect_stderr(io.StringIO()):
+            code = dress.main([self.body().path, mhm, "-o", os.path.join(self.tmp.name, "out"),
+                               "--data", DATA, "--scale", "0.9"])
+        self.assertEqual((code, seen), (1, [0.9]))
+
+    def test_a_scale_out_of_range_is_refused(self):
+        mhm = os.path.join(self.tmp.name, "a.mhm")
+        with open(mhm, "w") as f:
+            f.write("version v1.1.1\nskeleton game_engine.mhskel\n")
+        for scale in ("0.4", "1.6", "nan"):
+            with self.subTest(scale):
+                err = io.StringIO()
+                with redirect_stderr(err), self.assertRaises(SystemExit):
+                    dress.main(["body.gltf", mhm, "-o", self.tmp.name, "--scale", scale])
+                self.assertIn("--scale must be 0.5..1.5", err.getvalue())
 
     def test_a_bad_body_is_refused(self):
         def fewer_vertices(d):

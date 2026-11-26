@@ -801,17 +801,29 @@ class Shipped(unittest.TestCase, WalkPosture):
         # each of the four men, as the game poses them, never come nearer
         # the front of his chest than CLEARANCE; nor, talking, the
         # townsfolk's (the women's busts and shawls stand furthest out).
-        with open(PROTAGONIST, "rb") as f:
-            tk = R.read_target(f.read())
+        # The reference skeleton is the shipped file's, as the game reads it
+        # (clips.rs read_reference), not the protagonist's own.
+        tk = R.Skeleton(self.doc)
         k = tk.find("pelvis")
         reference = (tk.rest_t[k], R.length(tk.rest_t[tk.find("calf_l")]) + R.length(tk.rest_t[tk.find("foot_l")]))
         clearance = R.Clearance(MODELS, TALKERS)
         self.assertEqual(len(clearance.models), 9)
+        # The clips were cleared for everyone 10 cm taller. Shrunk, the
+        # protagonist's arms still go through neither his body nor his
+        # clothes (the vest and poncho are part of the chest measured), but
+        # come nearer than CLEARANCE: these are the gaps he must keep, on
+        # every key (not every fifth: the nearest key falls between).
+        protagonist_gap = {"idle_fold_arms": 0.010, "idle_talk": 0.003}
         for clip in R.CLEAR + R.SPREAD:
-            for local, pelvis in self.keys(clip)[::5]:
-                for model in clearance.for_clip(clip).models:
+            keys = self.keys(clip)
+            for model in clearance.for_clip(clip).models:
+                allowed, step = 0.0, 5
+                if model["name"] == "protagonist" and clip in protagonist_gap:
+                    allowed, step = R.CLEARANCE - protagonist_gap[clip], 1
+                for local, pelvis in keys[::step]:
                     depth = clearance.depth(model, reference, local, pelvis)
-                    self.assertLessEqual(depth, 0.0, f"{clip} {model['name']}: {depth:.3f} m in")
+                    self.assertLessEqual(depth, allowed, f"{clip} {model['name']}: {R.CLEARANCE - depth:.4f} m clear, "
+                                         f"{R.CLEARANCE - allowed:.4f} m needed")
         extras = {a["name"]: a["extras"] for a in self.doc["animations"]}
         self.assertGreater(extras["idle_fold_arms"]["reach"], 0.05)
         self.assertGreaterEqual(extras["jog"]["spread"], 0.0)
