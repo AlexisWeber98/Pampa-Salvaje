@@ -134,6 +134,16 @@ This work is based on "Horse" (https://sketchfab.com/3d-models/horse-a6f860e43e3
 
 See `assets/models/fauna/henry/CREDITS.md` for details.
 
+### Colt Single Action Army .45 by Guy in a Poncho
+
+This work is based on "Colt Single Action Army .45" (https://sketchfab.com/3d-models/colt-single-action-army-45-b02548a3ecb84e3cbcfc6f4e2cf03992) by Guy in a Poncho (https://sketchfab.com/ponchoguy) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Colt Single Action Army .45 (the revolver of Bairoletto and the milicos) | Guy in a Poncho (ponchoguy), Sketchfab (https://sketchfab.com/3d-models/colt-single-action-army-45-b02548a3ecb84e3cbcfc6f4e2cf03992) | CC BY 4.0 (attribution required) | `assets/models/weapons/colt_saa.glb` | Converted by `tools/revolver.py` (downloaded 2026-11-26, glTF): turned with the barrel along -Z and the frame up, the origin in the middle of the grip; welded and decimated from about 74,000 to 5,999 triangles; its three maps shrunk from 4096 to 1024 px; a `Muzzle` node added at the muzzle |
+
+See `assets/models/weapons/CREDITS.md` for details.
+
 ### Horse Drawn Carriage 5 by gogiart
 
 This work is based on "Horse Drawn Carriage 5" (https://sketchfab.com/3d-models/horse-drawn-carriage-5-f3db55361be842e49db81c444f78518f) by gogiart licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

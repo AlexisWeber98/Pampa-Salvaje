@@ -143,7 +143,7 @@ impl Talk {
     }
 
     /// Un comentario suelto: el jugador sigue manejando.
-    fn remark(beats: Vec<Beat>) -> Self {
+    pub(crate) fn remark(beats: Vec<Beat>) -> Self {
         Self {
             beats,
             next: 0,
@@ -255,6 +255,9 @@ impl Plugin for ErrandPlugin {
             .init_resource::<crate::pulperia::HeldOpen>()
             .init_resource::<crate::chase::Gun>()
             .init_resource::<crate::chase::Sallied>()
+            .init_resource::<crate::chase::Yelled>()
+            .init_resource::<crate::chase::NearbyPlants>()
+            .add_message::<crate::chase::Gunshot>()
             .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
             .init_resource::<pampa_render::MapReach>()
@@ -266,6 +269,7 @@ impl Plugin for ErrandPlugin {
             .init_resource::<pampa_render::HudAnnouncement>()
             .init_resource::<crate::ride::AnnounceTimer>()
             .add_systems(Startup, (load_dialogue, tell_story).chain())
+            .add_systems(Startup, crate::chase::load_sounds)
             .add_systems(
                 Update,
                 (
@@ -277,9 +281,6 @@ impl Plugin for ErrandPlugin {
                     converse,
                     crate::escape::stage_cues,
                     crate::escape::run_scripted,
-                    crate::chase::tie_horses,
-                    crate::chase::sally,
-                    crate::chase::ride_after,
                     see_off,
                     frame_scene,
                     face_each_other,
@@ -292,6 +293,22 @@ impl Plugin for ErrandPlugin {
                 )
                     .chain()
                     .after(DrivePlayer),
+            )
+            // La milicada, entre el guion de la huida y lo que sigue.
+            .add_systems(
+                Update,
+                (
+                    crate::chase::tie_horses,
+                    crate::chase::sally,
+                    crate::chase::gather_plants,
+                    crate::chase::ride_after,
+                    crate::chase::show_shots,
+                    crate::chase::yell,
+                    crate::chase::play_sounds,
+                )
+                    .chain()
+                    .after(crate::escape::run_scripted)
+                    .before(see_off),
             );
     }
 }
@@ -1686,6 +1703,9 @@ mod tests {
         }
         let gun = app.world().resource::<crate::chase::Gun>().0;
         assert!(gun.rounds < pampa_core::Revolver::LOADED, "he shoots back");
+        // Y grita, como en `historia`.
+        let yells = beats_shown(&shipped_lines().chase_yells);
+        assert!(said(&app).contains(&yells[0]), "yells as he shoots");
         let nearest = |app: &mut App| {
             let me = player(app).1.rider.position;
             milicos(app)
@@ -1697,13 +1717,14 @@ mod tests {
         // vienen encima.
         teleport(&mut app, monte + GroundVec2::new(10.0, 0.0));
         let far = nearest(&mut app);
-        for _ in 0..200 {
+        // Menos que los segundos sin verlo que los hacen abandonar.
+        for _ in 0..60 {
             app.update();
         }
         assert!(app.world().resource::<Conversation>().0.is_none());
         assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
-        assert!(nearest(&mut app) < far - 50.0, "they gallop after him");
-        // Sacándoles más de 600 m abandonan, y fuera de vista desaparecen.
+        assert!(nearest(&mut app) < far - 10.0, "they gallop after him");
+        // Sacándoles más de 300 m abandonan, y fuera de vista desaparecen.
         teleport(&mut app, monte + porch.heading.forward() * 1000.0);
         app.update();
         assert!(milicos(&mut app).is_empty(), "lost them");

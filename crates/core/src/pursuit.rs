@@ -18,9 +18,28 @@ pub const CHASER_PACE: f32 = 0.9;
 /// A esta distancia de su presa, en metros, el perseguidor solo le sigue el ritmo.
 pub const ALONGSIDE: f32 = 5.0;
 /// Con esta ventaja, en metros, la presa dejó atrás a su perseguidor.
-pub const OUTRUN: f32 = 600.0;
-/// Con esta ventaja, en metros, la presa se le pierde en el monte.
-pub const LOST_IN_MONTE: f32 = 400.0;
+pub const OUTRUN: f32 = 300.0;
+/// Con esta ventaja, en metros, la presa se le pierde entre árboles y
+/// malezas ([`in_cover`]).
+pub const LOST_IN_COVER: f32 = 200.0;
+/// Cuántos segundos seguidos sin verla ([`in_sight`]) le alcanzan a un
+/// perseguidor para perder a su presa.
+pub const LOST_SIGHT_SECONDS: f32 = 6.0;
+/// Dentro de qué radio, en metros, se cuentan las plantas alrededor de la
+/// presa para saber si está entre árboles y malezas.
+pub const COVER_RADIUS: f32 = 25.0;
+/// Cuántas plantas (árboles o arbustos) en [`COVER_RADIUS`] hacen monte o
+/// bosque.
+pub const COVER_PLANTS: usize = 12;
+/// A qué altura sobre el suelo miran los ojos de un jinete, en metros.
+pub const RIDER_EYE: f32 = 2.4;
+/// Cuántas copas de árbol cruzadas por la línea de vista la tapan.
+pub const SIGHT_CROWNS: usize = 2;
+/// Cada cuántos metros se mira el terreno a lo largo de la línea de vista.
+const SIGHT_STEP: f32 = 10.0;
+/// Desde qué tamaño, en metros, un obstáculo tapa la vista (más chicos son
+/// troncos y postes).
+const SIGHT_WALL: f32 = 1.5;
 /// Cuánto puede apartarse el rumbo del camino para seguir acelerando, en radianes.
 const ON_COURSE: f32 = 0.8;
 /// Con esta velocidad de más sobre el ritmo que debe llevar (m/s), frena.
@@ -93,9 +112,63 @@ pub fn pursue(
 }
 
 /// Si un perseguidor que va `lead` metros detrás de su presa ya la perdió:
-/// a más de [`OUTRUN`], o de [`LOST_IN_MONTE`] si ella está en el monte.
-pub fn outrun(lead: f32, in_monte: bool) -> bool {
-    lead > if in_monte { LOST_IN_MONTE } else { OUTRUN }
+/// a más de [`OUTRUN`], o de [`LOST_IN_COVER`] si ella está entre árboles y
+/// malezas ([`in_cover`]).
+pub fn outrun(lead: f32, in_cover: bool) -> bool {
+    lead > if in_cover { LOST_IN_COVER } else { OUTRUN }
+}
+
+/// Si `at` está entre árboles y malezas, en el monte o en un bosque: al menos
+/// [`COVER_PLANTS`] de las `plants` (árboles y arbustos) a [`COVER_RADIUS`].
+pub fn in_cover(plants: impl IntoIterator<Item = Vec2>, at: Vec2) -> bool {
+    plants
+        .into_iter()
+        .filter(|p| p.distance(at) <= COVER_RADIUS)
+        .take(COVER_PLANTS)
+        .count()
+        >= COVER_PLANTS
+}
+
+/// Si un jinete en `from` ve a otro en `to`, a la altura de los ojos
+/// ([`RIDER_EYE`]): no lo ven si en el medio hay una pared o un edificio de
+/// `world`, si el terreno se levanta por encima de la línea de vista, o si
+/// ella cruza [`SIGHT_CROWNS`] o más copas de los `crowns` (centro y radio de
+/// cada árbol).
+pub fn in_sight(world: &World, crowns: &[(Vec2, f32)], from: Vec2, to: Vec2) -> bool {
+    let wall = |b: &&Aabb| {
+        let size = b.size();
+        size.x.max(size.y) >= SIGHT_WALL && b.segment_overlap(from, to).is_some()
+    };
+    let area = Aabb::new(
+        Vec2::new(from.x.min(to.x), from.y.min(to.y)),
+        Vec2::new(from.x.max(to.x), from.y.max(to.y)),
+    );
+    if world.obstacles.near_above(area, RIDER_EYE).iter().any(wall) {
+        return false;
+    }
+    let (eye_from, eye_to) = (
+        world.ground_height(from) + RIDER_EYE,
+        world.ground_height(to) + RIDER_EYE,
+    );
+    let length = from.distance(to);
+    let steps = (length / SIGHT_STEP) as usize;
+    for k in 1..steps {
+        let t = k as f32 / steps as f32;
+        let p = from + (to - from) * t;
+        if world.ground_height(p) > eye_from + (eye_to - eye_from) * t {
+            return false;
+        }
+    }
+    let crossed = crowns
+        .iter()
+        .filter(|(at, radius)| {
+            let along = (*at - from).dot(to - from) / (length * length).max(f32::EPSILON);
+            let near = from + (to - from) * along.clamp(0.0, 1.0);
+            near.distance(*at) < *radius
+        })
+        .take(SIGHT_CROWNS)
+        .count();
+    crossed < SIGHT_CROWNS
 }
 
 /// Las riendas de un perseguidor al que le espantaron el caballo: frena hasta
@@ -153,6 +226,42 @@ impl Revolver {
     /// metros o menos (`distances`).
     pub fn caught(&self, distances: &[f32]) -> bool {
         self.empty() && distances.iter().any(|d| *d <= ALONGSIDE)
+    }
+}
+
+/// Los tiros de un milico que persigue: cuando tiene a la presa a
+/// [`ReturnFire::RANGE`] metros o menos, tira cada tanto, entre
+/// [`ReturnFire::EVERY_MIN`] y [`ReturnFire::EVERY_MAX`] segundos (al azar,
+/// determinista por milico). No le hacen nada a nadie: son ruido y fogonazo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReturnFire {
+    rng: crate::rng::Rng,
+    pub ready_in: f32,
+}
+
+impl ReturnFire {
+    /// Hasta dónde tira un milico, en metros.
+    pub const RANGE: f32 = 60.0;
+    /// Lo mínimo entre dos tiros del mismo milico, en segundos.
+    pub const EVERY_MIN: f32 = 3.0;
+    /// Lo máximo entre dos tiros del mismo milico, en segundos.
+    pub const EVERY_MAX: f32 = 8.0;
+
+    /// Los tiros del milico `index`; el primero, al rato de tener a tiro.
+    pub fn new(index: u32) -> Self {
+        let mut rng = crate::rng::Rng::new(0x7a1e_0f1e, index);
+        let ready_in = rng.range(1.0, Self::EVERY_MIN);
+        Self { rng, ready_in }
+    }
+
+    /// Avanza `dt` segundos con la presa a `distance` metros: si tira.
+    pub fn fire(&mut self, distance: f32, dt: f32) -> bool {
+        self.ready_in = (self.ready_in - dt).max(0.0);
+        if distance > Self::RANGE || self.ready_in > 0.0 {
+            return false;
+        }
+        self.ready_in = self.rng.range(Self::EVERY_MIN, Self::EVERY_MAX);
+        true
     }
 }
 
@@ -305,12 +414,57 @@ mod tests {
     }
 
     #[test]
-    fn they_give_up_six_hundred_metres_behind_or_four_hundred_in_the_monte() {
+    fn they_give_up_three_hundred_metres_behind_or_two_hundred_in_cover() {
+        assert_eq!((OUTRUN, LOST_IN_COVER), (300.0, 200.0));
         assert!(!outrun(OUTRUN, false));
         assert!(outrun(OUTRUN + 1.0, false));
-        assert!(!outrun(LOST_IN_MONTE + 1.0, false));
-        assert!(!outrun(LOST_IN_MONTE, true));
-        assert!(outrun(LOST_IN_MONTE + 1.0, true));
+        assert!(!outrun(LOST_IN_COVER + 1.0, false));
+        assert!(!outrun(LOST_IN_COVER, true));
+        assert!(outrun(LOST_IN_COVER + 1.0, true));
+    }
+
+    #[test]
+    fn among_a_dozen_trees_and_shrubs_is_cover_and_open_pampa_is_not() {
+        let at = Vec2::new(100.0, 50.0);
+        let ring = |n: usize, r: f32| {
+            (0..n).map(move |k| {
+                let a = k as f32 * 0.7;
+                at + Vec2::new(a.cos(), a.sin()) * r
+            })
+        };
+        assert!(in_cover(ring(COVER_PLANTS, COVER_RADIUS - 1.0), at));
+        assert!(!in_cover(ring(COVER_PLANTS - 1, COVER_RADIUS - 1.0), at));
+        assert!(!in_cover(ring(40, COVER_RADIUS + 1.0), at), "too far away");
+    }
+
+    #[test]
+    fn a_building_the_land_or_two_crowns_hide_him_but_one_tree_does_not() {
+        let (from, to) = (Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0));
+        let open = World::default();
+        assert!(in_sight(&open, &[], from, to));
+        let mut walled = World::default();
+        walled
+            .obstacles
+            .push(Aabb::new(Vec2::new(90.0, -10.0), Vec2::new(100.0, 10.0)));
+        assert!(!in_sight(&walled, &[], from, to), "a building");
+        let mut posts = World::default();
+        posts.obstacles.push(Aabb::from_center_size(
+            Vec2::new(95.0, 0.0),
+            Vec2::new(0.4, 0.4),
+        ));
+        assert!(in_sight(&posts, &[], from, to), "a trunk is not a wall");
+        let mut fenced = World::default();
+        let span = Aabb::from_center_size(Vec2::new(95.0, 0.0), Vec2::new(0.15, 40.0));
+        fenced.obstacles.push_low(span, FenceLayout::HEIGHT);
+        assert!(in_sight(&fenced, &[], from, to), "he sees over a fence");
+        let one = [(Vec2::new(100.0, 1.0), 3.0)];
+        assert!(in_sight(&open, &one, from, to), "one tree");
+        let two = [(Vec2::new(100.0, 1.0), 3.0), (Vec2::new(150.0, -2.0), 3.0)];
+        assert!(!in_sight(&open, &two, from, to), "two crowns");
+        let aside = [(Vec2::new(100.0, 5.0), 3.0), (Vec2::new(150.0, -5.0), 3.0)];
+        assert!(in_sight(&open, &aside, from, to), "trees to the side");
+        let behind = [(Vec2::new(-10.0, 0.0), 3.0), (Vec2::new(210.0, 0.0), 3.0)];
+        assert!(in_sight(&open, &behind, from, to), "not between them");
     }
 
     #[test]
@@ -333,6 +487,30 @@ mod tests {
             gun.fire(&near, DT);
         }
         assert_eq!(gun.fire(&near, 10.0), None, "no rounds left");
+    }
+
+    #[test]
+    fn a_milico_fires_now_and_then_only_within_range_and_not_in_step_with_the_others() {
+        let shots = |index: u32, distance: f32| {
+            let mut fire = ReturnFire::new(index);
+            (0..(60.0 / DT) as usize)
+                .filter_map(|k| fire.fire(distance, DT).then_some(k as f32 * DT))
+                .collect::<Vec<_>>()
+        };
+        assert!(shots(0, ReturnFire::RANGE + 1.0).is_empty(), "out of range");
+        let one = shots(0, 20.0);
+        for gap in one.windows(2).map(|w| w[1] - w[0]) {
+            assert!(
+                (ReturnFire::EVERY_MIN - DT..=ReturnFire::EVERY_MAX + DT).contains(&gap),
+                "{gap}"
+            );
+        }
+        assert!(one.len() >= (60.0 / ReturnFire::EVERY_MAX) as usize);
+        assert_ne!(one, shots(1, 20.0), "each milico at his own time");
+        let gaps: Vec<f32> = one.windows(2).map(|w| w[1] - w[0]).collect();
+        let spread = gaps.iter().cloned().fold(0.0, f32::max)
+            - gaps.iter().cloned().fold(f32::INFINITY, f32::min);
+        assert!(spread > 1.0, "not like clockwork: {gaps:?}");
     }
 
     #[test]

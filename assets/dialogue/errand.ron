@@ -141,4 +141,10 @@
         Say(Bairoletto, "¿Y el caballo, pibe? A pata no vamos a ningún lado."),
         Say(Bairoletto, "Andá a buscarlo y traelo, que acá te espero."),
     ],
+    // Acto 6, palabra por palabra: "(Persecución, Bairoletto dispara y grita
+    // como un loco.)" / "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!".
+    // En ancas, grita una línea por tiro, en orden, cada una una sola vez.
+    chase_yells: [
+        Say(Bairoletto, "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!"),
+    ],
 )

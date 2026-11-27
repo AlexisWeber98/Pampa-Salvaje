@@ -85,8 +85,9 @@ pub use places::{
     TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays, pulperia_sign,
 };
 pub use pursuit::{
-    ALONGSIDE, CHASER_PACE, LOST_IN_MONTE, OUTRUN, Pursuit, Revolver, chaser_params, outrun, pursue,
-    rein_in,
+    ALONGSIDE, CHASER_PACE, COVER_PLANTS, COVER_RADIUS, LOST_IN_COVER, LOST_SIGHT_SECONDS, OUTRUN,
+    Pursuit, RIDER_EYE, ReturnFire, Revolver, SIGHT_CROWNS, chaser_params, in_cover, in_sight,
+    outrun, pursue, rein_in,
 };
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{

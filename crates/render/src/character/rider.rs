@@ -1847,6 +1847,108 @@ pub(super) fn carry_stirrups(
     }
 }
 
+/// Alguien a caballo que dispara (acto 6): el que va en ancas si hay uno
+/// ([`Pillion`]), si no el jinete. Mientras el componente está en la entidad
+/// del personaje, estira el brazo derecho hacia `at` (en el mundo) con el
+/// revólver en la mano ([`super::gunfire`]); el fogonazo dura los `flash`
+/// segundos que quedan. El juego lo pone, lo actualiza y lo saca.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Shooting {
+    pub at: Vec3,
+    pub flash: f32,
+}
+
+/// Hacia dónde se dobla el codo del brazo que apunta, en el espacio del
+/// modelo (+X a su izquierda): hacia abajo y hacia afuera, a su derecha.
+pub const AIM_ELBOW_POLE: Vec3 = Vec3::new(-0.4, -1.0, 0.0);
+
+/// Qué tanto del largo del brazo estira al apuntar: casi recto, sin trabar el
+/// codo.
+pub const AIM_REACH: f32 = 0.97;
+
+/// El personaje que dispara con el modelo de `riding` (en ancas si `behind`):
+/// el dueño del caballo, si tiene [`Shooting`] y este modelo es quien tira
+/// (el que va en ancas si hay uno, si no el jinete). `doubled` dice si un
+/// personaje con [`Shooting`] lleva a alguien en ancas.
+pub(super) fn shooter(
+    riding: &Riding,
+    behind: Option<&Behind>,
+    parents: &Query<&ChildOf>,
+    doubled: impl Fn(Entity) -> Option<bool>,
+) -> Option<Entity> {
+    let carrier = behind.map_or(riding.horse, |b| b.0);
+    let character = parents.get(carrier).ok()?.parent();
+    (doubled(character)? == behind.is_some()).then_some(character)
+}
+
+/// La mano derecha de un modelo sentado.
+pub(super) fn right_hand(seated: &Seated) -> Entity {
+    seated.bone(Bone::Hand(1))
+}
+
+/// Estira el brazo derecho de cada uno que dispara ([`Shooting`]) hacia su
+/// blanco, después de que [`pose_riders`] lo puso en pose y antes de que se
+/// calculen los transforms. El blanco pasa al espacio del modelo con la
+/// ubicación del frame anterior: un frame de atraso no se ve.
+pub(super) fn aim_shooters(
+    riders: Query<(Entity, &Rig, &Riding, &Seated, Option<&Behind>)>,
+    shooting: Query<(&Shooting, Has<Pillion>)>,
+    parents: Query<&ChildOf>,
+    globals: Query<&GlobalTransform>,
+    mut transforms: Bones,
+) {
+    for (me, rig, riding, seated, behind) in &riders {
+        if rig.frozen || !rig.started {
+            continue;
+        }
+        let doubled = |c: Entity| shooting.get(c).ok().map(|(_, d)| d);
+        let Some(character) = shooter(riding, behind, &parents, doubled) else {
+            continue;
+        };
+        let (Ok((shot, _)), Ok(model)) = (shooting.get(character), globals.get(me)) else {
+            continue;
+        };
+        let target = model.affine().inverse().transform_point3(shot.at);
+        aim_arm(&mut transforms, seated, target);
+    }
+}
+
+/// Lleva la mano derecha de `seated` hacia `target` (espacio del modelo), con
+/// el brazo casi estirado ([`AIM_REACH`]) y el codo hacia [`AIM_ELBOW_POLE`].
+fn aim_arm(transforms: &mut Bones, seated: &Seated, target: Vec3) {
+    let chain = [
+        Bone::Root,
+        Bone::Pelvis,
+        Bone::Spine1,
+        Bone::Spine2,
+        Bone::Spine3,
+        Bone::Clavicle(1),
+    ];
+    let Some(shoulder) = chain.iter().try_fold(Place::IDENTITY, |place, bone| {
+        Some(place.then(transforms.get(seated.bone(*bone)).ok()?))
+    }) else {
+        return;
+    };
+    let arm = [Bone::UpperArm(1), Bone::LowerArm(1), Bone::Hand(1)].map(|b| seated.bone(b));
+    let (Ok(upper), Ok(lower), Ok(hand)) = (
+        transforms.get(arm[0]).copied(),
+        transforms.get(arm[1]).copied(),
+        transforms.get(arm[2]).copied(),
+    ) else {
+        return;
+    };
+    let joint = shoulder.then(&upper).translation;
+    let length = lower.translation.length() + hand.translation.length();
+    let toward = (target - joint).normalize_or_zero();
+    reach(
+        transforms,
+        shoulder,
+        arm,
+        joint + toward * (length * AIM_REACH),
+        AIM_ELBOW_POLE,
+    );
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -3319,6 +3421,169 @@ pub(crate) mod tests {
             };
             e = parent.parent();
         }
+    }
+
+    /// Espera a que el modelo de quien va (`behind`: en ancas) empiece a
+    /// moverse, y lo devuelve.
+    fn started_rider(app: &mut App, behind: bool) -> Entity {
+        (0..3000)
+            .find_map(|_| {
+                app.update();
+                let world = app.world_mut();
+                let found = world
+                    .query::<(Entity, &Rig, Has<Behind>)>()
+                    .iter(world)
+                    .find(|(_, r, b)| r.started && *b == behind)
+                    .map(|(e, ..)| e);
+                if found.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                found
+            })
+            .expect("the rider never sat")
+    }
+
+    /// Qué tan derecho apunta el brazo derecho de `model` a `target`: el
+    /// coseno entre el hombro→mano y el hombro→blanco.
+    fn aimed(app: &mut App, model: Entity, target: Vec3) -> f32 {
+        let world = app.world_mut();
+        let seated = world.get::<Seated>(model).unwrap().clone();
+        let at = |b: Bone| {
+            world
+                .get::<GlobalTransform>(seated.bone(b))
+                .unwrap()
+                .translation()
+        };
+        let (shoulder, hand) = (at(Bone::UpperArm(1)), at(Bone::Hand(1)));
+        (hand - shoulder)
+            .normalize()
+            .dot((target - shoulder).normalize())
+    }
+
+    /// La mano derecha del modelo sentado `model`.
+    fn seated_hand(world: &World, model: Entity) -> Entity {
+        right_hand(world.get::<Seated>(model).unwrap())
+    }
+
+    /// Las piezas del revólver y el fogonazo que hay, y si el fogonazo se ve.
+    fn gun_parts(app: &mut App) -> (usize, Option<Visibility>) {
+        let world = app.world_mut();
+        let guns = world
+            .query::<&super::super::gunfire::Revolver>()
+            .iter(world)
+            .count();
+        let flash = world
+            .query_filtered::<&Visibility, With<super::super::gunfire::MuzzleFlash>>()
+            .iter(world)
+            .next()
+            .copied();
+        (guns, flash)
+    }
+
+    #[test]
+    fn the_pillion_shoots_not_the_rider_arm_out_at_the_target_with_a_revolver_and_a_flash() {
+        let (mut app, me) = seated(
+            CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::Bayo,
+            },
+            0.0,
+        );
+        app.world_mut()
+            .entity_mut(me)
+            .insert(Pillion(FigureKind::Bairoletto));
+        let pillion = started_rider(&mut app, true);
+        let front = started_rider(&mut app, false);
+        // Un milico atrás y a un costado, a caballo.
+        let horse = *app.world().get::<GlobalTransform>(me).unwrap();
+        let target = horse.translation() + horse.rotation() * Vec3::new(-8.0, 1.5, -10.0);
+        let before = aimed(&mut app, pillion, target);
+        app.world_mut().entity_mut(me).insert(Shooting {
+            at: target,
+            flash: 1.0,
+        });
+        for _ in 0..4 {
+            app.update();
+        }
+        let after = aimed(&mut app, pillion, target);
+        assert!(
+            after > 0.97,
+            "the arm points at him: {after} (was {before})"
+        );
+        assert!(
+            aimed(&mut app, front, target) < 0.9,
+            "the rider keeps the reins"
+        );
+        assert_eq!(gun_parts(&mut app), (1, Some(Visibility::Inherited)));
+        // El Colt cargado en la mano, con el cañón hacia el milico.
+        let gun = {
+            let world = app.world_mut();
+            world
+                .query_filtered::<Entity, With<super::super::gunfire::Revolver>>()
+                .single(world)
+                .unwrap()
+        };
+        let loaded = (0..2000).any(|_| {
+            app.update();
+            let world = app.world_mut();
+            let mut meshes = world.query_filtered::<Entity, With<Mesh3d>>();
+            let found = meshes
+                .iter(world)
+                .any(|m| world.get::<ChildOf>(m).is_some() && under(world, m, gun));
+            if !found {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            found
+        });
+        assert!(loaded, "the revolver model loads");
+        let world = app.world_mut();
+        let at = *world.get::<GlobalTransform>(gun).unwrap();
+        let hand = world
+            .get::<GlobalTransform>(seated_hand(world, pillion))
+            .unwrap()
+            .translation();
+        let barrel = at.forward().as_vec3();
+        let toward = (target - at.translation()).normalize();
+        assert!(barrel.dot(toward) > 0.98, "aimed: {}", barrel.dot(toward));
+        assert!(at.translation().distance(hand) < 0.15, "in the hand");
+        // El fogonazo se apaga; el arma sigue en la mano.
+        app.world_mut().entity_mut(me).insert(Shooting {
+            at: target,
+            flash: 0.0,
+        });
+        app.update();
+        assert_eq!(gun_parts(&mut app), (1, Some(Visibility::Hidden)));
+        // Deja de tirar: baja el brazo y guarda el revólver.
+        app.world_mut().entity_mut(me).remove::<Shooting>();
+        for _ in 0..4 {
+            app.update();
+        }
+        assert_eq!(gun_parts(&mut app), (0, None));
+        assert!(aimed(&mut app, pillion, target) < 0.9, "the arm comes down");
+    }
+
+    #[test]
+    fn a_rider_alone_shoots_with_his_right_arm_out() {
+        let (mut app, me) = seated(
+            CharacterVisual::Mounted {
+                rider: FigureKind::Milico(0),
+                coat: Coat::Bayo,
+            },
+            0.0,
+        );
+        let rider = started_rider(&mut app, false);
+        let horse = *app.world().get::<GlobalTransform>(me).unwrap();
+        let target = horse.translation() + horse.rotation() * Vec3::new(-6.0, 1.5, 12.0);
+        app.world_mut().entity_mut(me).insert(Shooting {
+            at: target,
+            flash: 1.0,
+        });
+        for _ in 0..4 {
+            app.update();
+        }
+        let aim = aimed(&mut app, rider, target);
+        assert!(aim > 0.97, "the arm points at him: {aim}");
+        assert_eq!(gun_parts(&mut app), (1, Some(Visibility::Inherited)));
     }
 
     #[test]

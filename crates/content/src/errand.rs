@@ -44,6 +44,10 @@ pub struct ErrandLines {
     /// jugador llega a pie (ver `pampa_core::Errand::asks_for_horse`): que
     /// traiga el caballo. Vacío: no dice nada.
     pub bring_the_horse: Vec<Beat>,
+    /// Lo que grita Bairoletto en ancas mientras le tira a la milicada, una
+    /// línea por tiro, en orden, cada una una sola vez por huida. Vacío: no
+    /// grita nada.
+    pub chase_yells: Vec<Beat>,
 }
 
 /// El pueblo de la comisaría del encargo cuando el archivo no nombra uno.
@@ -65,6 +69,8 @@ struct File {
     amadeo: Vec<BeatFile>,
     #[serde(default)]
     bring_the_horse: Vec<BeatFile>,
+    #[serde(default)]
+    chase_yells: Vec<BeatFile>,
 }
 
 #[derive(Deserialize)]
@@ -207,6 +213,7 @@ impl ErrandLines {
             steps: file.steps.into_iter().map(Step::from).collect(),
             amadeo: file.amadeo.into_iter().map(Beat::from).collect(),
             bring_the_horse: file.bring_the_horse.into_iter().map(Beat::from).collect(),
+            chase_yells: file.chase_yells.into_iter().map(Beat::from).collect(),
         };
         lines.validate()?;
         Ok(lines)
@@ -328,6 +335,10 @@ impl ErrandLines {
                     "Andá a buscarlo y traelo, que acá te espero.",
                 ),
             ],
+            chase_yells: vec![say(
+                Npc::Bairoletto,
+                "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!",
+            )],
         }
     }
 
@@ -379,7 +390,8 @@ impl ErrandLines {
             check_scene(&format!("step {s}"), &step.scene)?;
         }
         check_scene("amadeo", &self.amadeo)?;
-        check_scene("bring_the_horse", &self.bring_the_horse)
+        check_scene("bring_the_horse", &self.bring_the_horse)?;
+        check_scene("chase_yells", &self.chase_yells)
     }
 
     /// Cada carácter distinto de cualquier texto que se muestra (líneas,
@@ -407,6 +419,7 @@ impl ErrandLines {
             .amadeo
             .iter()
             .chain(&self.bring_the_horse)
+            .chain(&self.chase_yells)
             .filter_map(shown);
         std::iter::once(self.police_town.as_str())
             .chain(self.not_your_horse.iter().map(String::as_str))
@@ -591,6 +604,14 @@ mod tests {
         };
         assert!(!horse.scene.is_empty());
         assert_eq!(speakers(&horse), ["Bairoletto"]);
+        // En la persecución grita, como en `historia`.
+        let yells = Step {
+            goal: Goal::Hideout,
+            objective: None,
+            scene: lines.chase_yells.clone(),
+        };
+        assert!(!yells.scene.is_empty());
+        assert_eq!(speakers(&yells), ["Bairoletto"]);
         for line in lines.texts() {
             assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
         }

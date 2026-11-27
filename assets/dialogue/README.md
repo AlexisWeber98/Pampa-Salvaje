@@ -160,6 +160,10 @@ La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
   de 7 m) a la puerta de La Colonia mientras lo espera de noche: que traiga el
   caballo. Se repite cada vez que el jugador vuelve a acercarse a pie. Puede
   faltar (entonces no dice nada); sus líneas se validan como las de los pasos.
+- `chase_yells` lo grita Bairoletto en ancas durante la persecución del acto
+  6: una línea por cada tiro suyo, en orden, cada una una sola vez por huida
+  (si en ese momento ya hay otra línea en pantalla, espera al tiro siguiente).
+  Puede faltar; sus líneas se validan como las de los pasos.
 - `not_your_horse` lo dice el jugador cuando intenta usar el caballo antes de
   que Don Hidalgo se lo preste (no detiene al jugador).
 - `police_town` es el pueblo de la comisaría, por su nombre en

@@ -105,6 +105,7 @@ impl Plugin for CharacterVisualPlugin {
                     load_character_clips,
                     load_recado,
                     super::pastime::make_kit,
+                    super::gunfire::make_gun_kit,
                 ),
             )
             .add_systems(
@@ -137,14 +138,24 @@ impl Plugin for CharacterVisualPlugin {
             .add_systems(PostUpdate, fade_people.after(attach_visuals))
             .add_systems(
                 PostUpdate,
-                (fit_rigs, fit_horses, ground_horses, pose_riders)
+                (
+                    fit_rigs,
+                    fit_horses,
+                    ground_horses,
+                    pose_riders,
+                    super::rider::aim_shooters,
+                )
                     .chain()
                     .after(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
             .add_systems(
                 PostUpdate,
-                (carry_stirrups, stretch_straps)
+                (
+                    carry_stirrups,
+                    stretch_straps,
+                    super::gunfire::hold_revolvers,
+                )
                     .chain()
                     .after(TransformSystems::Propagate)
                     .before(VisibilitySystems::VisibilityPropagate),
