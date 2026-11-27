@@ -1904,6 +1904,44 @@ mod tests {
     }
 
     #[test]
+    fn leaving_town_before_the_milicada_sallies_does_not_end_the_escape() {
+        let (mut app, porch) = act_six();
+        set_hour(&mut app, 21.0);
+        for _ in 0..3 {
+            app.update();
+        }
+        teleport(&mut app, porch.position + porch.heading.forward() * 5.0);
+        app.update();
+        play_out(&mut app, 90.0, |_| {});
+        assert!(carrying(&mut app));
+        // Lejos del pueblo, quieto: la milicada nunca salió.
+        teleport(&mut app, porch.position + porch.heading.forward() * 2_000.0);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(milicos(&mut app).is_empty());
+        assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
+        assert!(carrying(&mut app));
+    }
+
+    #[test]
+    fn a_title_card_with_any_text_runs_its_course_and_gives_back_the_controls() {
+        use pampa_render::TitleCard;
+        let (mut app, _) = act_six();
+        app.world_mut()
+            .resource_mut::<TitleCard>()
+            .start("Otro cartel");
+        app.update();
+        assert!(app.world().resource::<ControlLock>().0);
+        let frames = (TitleCard::OUT + TitleCard::HOLD + TitleCard::IN) / 0.05;
+        for _ in 0..frames as usize + 20 {
+            app.update();
+        }
+        assert!(!app.world().resource::<TitleCard>().active());
+        assert!(!app.world().resource::<ControlLock>().0);
+    }
+
+    #[test]
     fn farach_waits_inside_la_colonia_at_night_falls_at_the_shot_and_never_returns_to_his_door() {
         let (mut app, porch) = act_six();
         let e = errand(&app);
@@ -1951,6 +1989,12 @@ mod tests {
             app.update();
         }
         assert!(!blocks_door(&app));
+        // Un mundo vuelto a armar con su cuerpo en la puerta tampoco lo tiene.
+        let mut rebuilt = app.world().resource::<GameWorld>().0.clone();
+        rebuilt.obstacles.push(door.footprint());
+        app.insert_resource(GameWorld(rebuilt));
+        app.update();
+        assert!(!blocks_door(&app), "no invisible Farach in a rebuilt world");
         // Cae al oírse el disparo, ni antes ni después, y queda tendido ahí.
         teleport(&mut app, porch.position + porch.heading.forward() * 5.0);
         app.update();
