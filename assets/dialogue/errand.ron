@@ -97,13 +97,14 @@
                 Say(Bairoletto, "¡Le hice un agujero en el cuello al canalla del comisario! ¡jaja!"),
             ],
         ),
-        // "Al llegar al monte. Bairoletto se baja del caballo." El monte más
-        // cercano a Castex, fuera del campo raleado del pueblo. Paga $ 1
+        // "Al llegar al monte. Bairoletto se baja del caballo." Donde sea que
+        // pierdan a la milicada, en cualquier parte del campo fuera del pueblo
+        // (usuario, 2026-11-27). Paga $ 1
         // (usuario, 2026-11-12; `historia` dice $ 1,50). La línea larga va
         // cortada en dos en la coma, sin cambiar ninguna palabra.
         (
             goal: Hideout,
-            objective: "Escapá al monte",
+            objective: "Perdé a la milicada en el campo",
             scene: [
                 GetOff,
                 Say(Bairoletto, "Buen trabajo Pibe, como te lo prometí, acá tenes tu pago."),

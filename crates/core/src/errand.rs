@@ -111,7 +111,7 @@ pub enum ErrandStage {
     /// Volver de noche, a caballo, a la puerta de la pulpería donde espera
     /// Bairoletto (acto 6).
     Rendezvous,
-    /// Escapar al monte con Bairoletto en ancas (acto 6).
+    /// Perder a la milicada en el campo con Bairoletto en ancas (acto 6).
     Hideout,
     /// No queda ningún paso: el gancho para los actos siguientes, que se
     /// agregan como pasos en el archivo de la historia.
@@ -145,8 +145,8 @@ pub enum ErrandEvent {
     MountedHorse,
     /// Llegó de noche, a caballo, a la puerta donde lo espera Bairoletto.
     Rendezvous,
-    /// Llegó al monte.
-    ReachedHideout,
+    /// Perdió a la milicada en el campo.
+    ShookOff,
 }
 
 /// Lo que hizo apretar la tecla de interacción.
@@ -195,11 +195,9 @@ pub struct Errand {
     /// Bairoletto desde el que hablan ([`Self::place_to_talk`]).
     bairoletto_entry: Option<(Door, Vec2)>,
     /// Dónde está Bairoletto cuando el juego lo movió ([`Self::place`]): en
-    /// la vereda de [`Self::porch`] de noche, junto al caballo al llegar al
-    /// monte. Manda sobre su asiento.
+    /// la vereda de [`Self::porch`] de noche, junto al caballo donde perdieron
+    /// a la milicada. Manda sobre su asiento.
     bairoletto_moved: Option<Standing>,
-    /// El monte al que escapan en el acto 6 ([`Self::with_hideout`]).
-    hideout: Option<Vec2>,
     /// Pueblo del caballo, y el caballo.
     horse: (usize, TetheredHorse),
     /// Nombre del pueblo en el que está Farach.
@@ -276,9 +274,6 @@ impl Errand {
     /// Hasta qué distancia de Bairoletto, en la puerta, llega el jugador a
     /// caballo para que empiece el acto 6, en metros: el caballo frena solo.
     pub const MEET_RANGE: f32 = 7.0;
-    /// Hasta qué distancia del monte ([`Self::hideout`]) hay que llegar para
-    /// cumplir la huida, en metros.
-    pub const HIDEOUT_RANGE: f32 = 30.0;
 
     /// El encargo desde el pueblo `giver` (Don Hidalgo en su plaza, su caballo
     /// en su almacén de ramos generales) hasta el pueblo `police` (Farach en la
@@ -349,7 +344,6 @@ impl Errand {
             bairoletto_room,
             bairoletto_entry,
             bairoletto_moved: None,
-            hideout: None,
             horse: (giver, home.hitching_post.horse),
             police_name: away.name.clone(),
             stall,
@@ -377,23 +371,8 @@ impl Errand {
         }
     }
 
-    /// El encargo con `at` como el monte al que escapan en el acto 6
-    /// ([`crate::FloraSite::nearest_monte`]). Sin monte, el paso que pide
-    /// llegar a él no se puede cumplir.
-    pub fn with_hideout(self, at: Vec2) -> Self {
-        Self {
-            hideout: Some(at),
-            ..self
-        }
-    }
-
-    /// El monte al que escapan en el acto 6, si lo hay.
-    pub fn hideout(&self) -> Option<Vec2> {
-        self.hideout
-    }
-
     /// Pone a Bairoletto en `at`: en la vereda de [`Self::porch`] cuando
-    /// espera de noche, junto al caballo al bajarse de las ancas en el monte.
+    /// espera de noche, junto al caballo al bajarse de las ancas en el campo.
     /// Hasta entonces está en su asiento (también durante la escena del acto
     /// 4, aunque el paso pendiente ya sea el encuentro de la noche).
     pub fn place(&mut self, at: Standing) {
@@ -492,14 +471,13 @@ impl Errand {
                 .is_some_and(|p| at.distance(p.position) <= Self::MEET_RANGE)
     }
 
-    /// El jugador llega a `at`: si el paso pendiente es la huida y está a
-    /// menos de [`Self::HIDEOUT_RANGE`] del monte, se cumple y se juega su
-    /// escena.
-    pub fn reach_hideout(&mut self, at: Vec2) -> Option<ErrandEvent> {
-        let near = self
-            .hideout
-            .is_some_and(|m| at.distance(m) <= Self::HIDEOUT_RANGE);
-        self.advance(Goal::Hideout, near, ErrandEvent::ReachedHideout)
+    /// El jugador está en `at`: si el paso pendiente es la huida, la milicada
+    /// ya lo perdió (`lost`) y él está en el campo, en cualquier parte fuera
+    /// del pueblo de Farach (`town`, su extensión), se cumple y se juega su
+    /// escena. No hay un lugar fijo adonde llegar.
+    pub fn shake_off(&mut self, at: Vec2, town: Aabb, lost: bool) -> Option<ErrandEvent> {
+        let free = lost && !town.contains_point(at);
+        self.advance(Goal::Hideout, free, ErrandEvent::ShookOff)
     }
 
     /// El pueblo al que un encargo desde el pueblo `giver` manda al jugador: el
@@ -615,7 +593,8 @@ impl Errand {
             Goal::Talk(npc) => Some(self.standing(npc).position),
             Goal::TakeHorse => Some(self.horse.1.position),
             Goal::Rendezvous => self.porch().map(|p| p.position),
-            Goal::Hideout => self.hideout,
+            // En cualquier parte del campo: no hay adónde mandar.
+            Goal::Hideout => None,
         }
     }
 
@@ -647,10 +626,12 @@ impl Errand {
     /// momento del juego (sea cual sea el paso pendiente), Amadeo lo llama, y
     /// el camino por el que Lisandro se le acerca: hasta su lugar para hablar
     /// ([`Self::place_to_talk`]). Al llegar, [`Self::talk`] juega el
-    /// encuentro. Nadie más llama al jugador, y Amadeo una sola vez.
+    /// encuentro. Nadie más llama al jugador, y Amadeo una sola vez. Durante
+    /// la huida del acto 6 no llama: el encuentro queda para después.
     pub fn hail(&self, at: Vec2, travel: Travel) -> Option<Vec<Vec2>> {
         let him = self.amadeo.position;
-        let due = !self.met_amadeo && !self.amadeo_scene.is_empty();
+        let escaping = self.stage() == ErrandStage::Hideout;
+        let due = !self.met_amadeo && !self.amadeo_scene.is_empty() && !escaping;
         (due && at.distance(him) <= Self::HAIL_RANGE)
             .then(|| self.place_to_talk(Npc::Amadeo, at, travel))
             .flatten()
@@ -744,7 +725,7 @@ impl Errand {
             Goal::Talk(npc) => self.talk(npc, at),
             Goal::TakeHorse => self.mount(at),
             // Empiezan solos, al llegar ([`Self::rendezvous`],
-            // [`Self::reach_hideout`]).
+            // [`Self::shake_off`]).
             Goal::Rendezvous | Goal::Hideout => None,
         });
         match event {
@@ -1287,8 +1268,8 @@ mod tests {
         assert_eq!(e.place_to_talk(Npc::Farach, stop, Travel::OnFoot), None);
     }
 
-    /// El acto 6: el encuentro de noche en la puerta y la huida al monte.
-    fn escape(e: Errand, hideout: Vec2) -> Errand {
+    /// El acto 6: el encuentro de noche en la puerta y la huida por el campo.
+    fn escape(e: Errand) -> Errand {
         let step = |goal, objective: &str| Step {
             goal,
             objective: Some(objective.into()),
@@ -1296,9 +1277,8 @@ mod tests {
         };
         e.with_story(vec![
             step(Goal::Rendezvous, "Volvé de noche a La Colonia"),
-            step(Goal::Hideout, "Escapá al monte"),
+            step(Goal::Hideout, "Perdé a la milicada en el campo"),
         ])
-        .with_hideout(hideout)
     }
 
     #[test]
@@ -1306,8 +1286,7 @@ mod tests {
         let (towns, e) = errand();
         let (_, inside) = towns[1].pulperia().unwrap();
         let door = inside.door;
-        let monte = Vec2::new(5000.0, 5000.0);
-        let mut e = escape(e, monte);
+        let mut e = escape(e);
         assert_eq!(e.stage(), ErrandStage::Rendezvous);
         // Parado en la vereda, frente a la puerta, mirando a la calle; ahí
         // apunta el mapa. Hasta que el juego lo pone ahí sigue en su asiento.
@@ -1379,37 +1358,56 @@ mod tests {
     }
 
     #[test]
-    fn the_escape_ends_within_reach_of_the_monte_and_bairoletto_stays_where_he_got_off() {
+    fn amadeo_does_not_hail_during_the_escape_and_keeps_his_meeting_for_later() {
         let (_, e) = errand();
-        let monte = Vec2::new(5000.0, 5000.0);
-        let mut e = escape(e, monte);
+        let mut e = escape(e).with_amadeo(cheese());
+        let him = e.standing(Npc::Amadeo).position;
+        let near = east(him, Errand::HAIL_RANGE - 0.2);
         let door = e.porch().unwrap().position;
+        let town = Aabb::from_center_size(door, Vec2::new(400.0, 400.0));
         assert!(e.rendezvous(door, Travel::Riding, 21.0).is_some());
-        assert_eq!(e.target(), Some(monte));
-        assert_eq!(e.objective().as_deref(), Some("Escapá al monte"));
-        let short = east(monte, Errand::HIDEOUT_RANGE + 1.0);
-        assert_eq!(e.reach_hideout(short), None);
-        assert_eq!(e.interact(monte), Interaction::Nothing);
-        let there = east(monte, Errand::HIDEOUT_RANGE - 1.0);
-        assert_eq!(e.reach_hideout(there), Some(ErrandEvent::ReachedHideout));
+        // Huyendo con Bairoletto en ancas, pasa por su puesto y no lo llama.
+        assert_eq!(e.hail(near, Travel::Riding), None);
+        assert!(!e.talked_to(Npc::Amadeo));
+        // Terminada la huida, el encuentro sigue pendiente.
+        let field = east(door, 1000.0);
+        assert!(e.shake_off(field, town, true).is_some());
+        assert!(e.hail(near, Travel::Riding).is_some());
+    }
+
+    #[test]
+    fn the_escape_ends_anywhere_in_the_country_once_the_milicada_lost_him() {
+        let (_, e) = errand();
+        let mut e = escape(e);
+        let door = e.porch().unwrap().position;
+        let town = Aabb::from_center_size(door, Vec2::new(400.0, 400.0));
+        assert!(e.rendezvous(door, Travel::Riding, 21.0).is_some());
+        // No hay un lugar fijo: ni marca en el mapa.
+        assert_eq!(e.target(), None);
+        assert_eq!(
+            e.objective().as_deref(),
+            Some("Perdé a la milicada en el campo")
+        );
+        let field = east(door, 1000.0);
+        // Con la milicada detrás no se cumple, ni apretando la tecla.
+        assert_eq!(e.shake_off(field, town, false), None);
+        assert_eq!(e.interact(field), Interaction::Nothing);
+        // Perdida en el pueblo tampoco: Bairoletto no se baja en la calle.
+        assert_eq!(e.shake_off(door, town, true), None);
+        assert_eq!(e.stage(), ErrandStage::Hideout);
+        // Perdida en cualquier parte del campo, se cumple, una sola vez.
+        assert_eq!(e.shake_off(field, town, true), Some(ErrandEvent::ShookOff));
+        assert_eq!(e.shake_off(field, town, true), None);
         assert_eq!(e.stage(), ErrandStage::Done);
         assert_eq!((e.target(), e.objective()), (None, None));
         // Se bajó junto al caballo: ahí está, para mirarse al hablar.
         let beside = Standing {
             town: 1,
-            position: there,
+            position: field,
             heading: Heading::from_radians(0.0),
         };
         e.place(beside);
         assert_eq!(e.standing(Npc::Bairoletto), beside);
-        // Sin monte no hay huida que cumplir.
-        let (_, e) = errand();
-        let mut e = escape(e, monte);
-        e.hideout = None;
-        let door = e.porch().unwrap().position;
-        assert!(e.rendezvous(door, Travel::Riding, 21.0).is_some());
-        assert_eq!(e.target(), None);
-        assert_eq!(e.reach_hideout(monte), None);
     }
 
     #[test]

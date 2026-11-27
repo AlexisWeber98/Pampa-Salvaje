@@ -890,6 +890,10 @@ pub struct RiderMotion {
     /// Cuánto gira la cabeza una persona sentada en un banco hacia lo que
     /// mira ([`Gaze`]), acercándose suavemente.
     pub gaze: Spring,
+    /// Al disparar ([`Shooting`]): cuánto gira el torso hacia el blanco y
+    /// cuánto más la cabeza, en radianes (positivo a su izquierda),
+    /// acercándose suavemente, y de vuelta a cero al dejar de tirar.
+    pub aim: [Spring; 2],
 }
 
 /// Qué tan rápido gira la cabeza una persona sentada hacia lo que mira
@@ -1858,13 +1862,152 @@ pub struct Shooting {
     pub flash: f32,
 }
 
-/// Hacia dónde se dobla el codo del brazo que apunta, en el espacio del
-/// modelo (+X a su izquierda): hacia abajo y hacia afuera, a su derecha.
+/// Hacia dónde se dobla el codo del brazo que apunta, en los ejes del cuerpo
+/// (+X a su izquierda, +Y arriba, +Z su frente): hacia abajo y hacia afuera,
+/// a su derecha.
 pub const AIM_ELBOW_POLE: Vec3 = Vec3::new(-0.4, -1.0, 0.0);
 
 /// Qué tanto del largo del brazo estira al apuntar: casi recto, sin trabar el
 /// codo.
 pub const AIM_REACH: f32 = 0.97;
+
+/// Cuánto puede girar el torso alguien sentado a caballo para disparar, en
+/// radianes, hacia su derecha (el lado del revólver) y hacia su izquierda (con
+/// el brazo cruzado): la columna sobre la pelvis, que las piernas sujetan.
+pub const TWIST_RIGHT: f32 = 75.0 * std::f32::consts::PI / 180.0;
+pub const TWIST_LEFT: f32 = 50.0 * std::f32::consts::PI / 180.0;
+
+/// Cuánto más gira la cabeza sobre el torso para mirar al blanco, en
+/// radianes, a cada lado.
+pub const LOOK_TURN: f32 = 75.0 * std::f32::consts::PI / 180.0;
+
+/// Desde qué rumbo a su izquierda un blanco que viene de atrás se encara
+/// girando a la derecha (el brazo del revólver sale por ese costado), en
+/// radianes.
+pub const TURN_RIGHT_FROM: f32 = 135.0 * std::f32::consts::PI / 180.0;
+
+/// Qué tan rápido gira el torso hacia el blanco y de vuelta: la frecuencia
+/// angular de su resorte (se asienta en unos 0,4 s).
+pub const TWIST_EASE: f32 = 12.0;
+
+/// Cuánto de la torsión del torso lleva cada vértebra, de abajo hacia arriba.
+const TWIST_SHARES: [(Bone, f32); 3] = [
+    (Bone::Spine1, 0.3),
+    (Bone::Spine2, 0.35),
+    (Bone::Spine3, 0.35),
+];
+
+/// Cuánto de la vuelta de la cabeza lleva el cuello y cuánto la cabeza.
+const LOOK_SHARES: [(Bone, f32); 2] = [(Bone::Neck, 0.4), (Bone::Head, 0.6)];
+
+/// Los ejes del cuerpo de `seated` en el espacio del modelo, de su pose de
+/// este frame: su izquierda (del hombro derecho al izquierdo), arriba (por la
+/// columna, de la cintura al cuello) y su frente; y dónde está su pecho.
+fn body_axes(transforms: &Bones, seated: &Seated) -> Option<(Mat3, Vec3)> {
+    let spine = [Bone::Root, Bone::Pelvis, Bone::Spine1];
+    let chest = [
+        Bone::Root,
+        Bone::Pelvis,
+        Bone::Spine1,
+        Bone::Spine2,
+        Bone::Spine3,
+    ];
+    let at = |chain: &[Bone], end: &[Bone]| {
+        let mut chain = chain.to_vec();
+        chain.extend_from_slice(end);
+        Some(model_place(transforms, seated, &chain)?.translation)
+    };
+    let (waist, top) = (at(&spine, &[])?, at(&chest, &[Bone::Neck])?);
+    let left = at(&chest, &[Bone::Clavicle(0), Bone::UpperArm(0)])?
+        - at(&chest, &[Bone::Clavicle(1), Bone::UpperArm(1)])?;
+    let up = (top - waist).try_normalize()?;
+    let left = left.reject_from(up).try_normalize()?;
+    Some((Mat3::from_cols(left, up, left.cross(up)), at(&chest, &[])?))
+}
+
+/// Hacia dónde está `toward` (en los ejes del cuerpo: +X su izquierda, +Z su
+/// frente) desde el frente del jinete: el giro alrededor de la vertical,
+/// positivo a su izquierda. Uno que viene de atrás por la izquierda, pasado
+/// [`TURN_RIGHT_FROM`], se encara por la derecha (más de media vuelta).
+pub fn bearing(toward: Vec3) -> f32 {
+    let yaw = toward.x.atan2(toward.z);
+    if yaw > TURN_RIGHT_FROM {
+        yaw - std::f32::consts::TAU
+    } else {
+        yaw
+    }
+}
+
+/// El giro del torso ([`TWIST_RIGHT`], [`TWIST_LEFT`]) y el de la cabeza
+/// sobre él ([`LOOK_TURN`]) para encarar un blanco en `bearing`.
+pub fn aim_turn(bearing: f32) -> [f32; 2] {
+    let twist = bearing.clamp(-TWIST_RIGHT, TWIST_LEFT);
+    [twist, (bearing - twist).clamp(-LOOK_TURN, LOOK_TURN)]
+}
+
+/// La ubicación de `bone` en el espacio del modelo, desde la raíz por
+/// `chain` (los huesos de la raíz hasta él, en orden).
+fn model_place(transforms: &Bones, seated: &Seated, chain: &[Bone]) -> Option<Place> {
+    chain.iter().try_fold(Place::IDENTITY, |place, bone| {
+        Some(place.then(transforms.get(seated.bone(*bone)).ok()?))
+    })
+}
+
+/// Gira cada hueso de `shares` (de padre a hijo, colgando de `parents`) su
+/// parte de `angle` alrededor de `axis`, en el espacio del modelo: la
+/// torsión de una cadena sobre su propio eje.
+fn turn_chain(
+    transforms: &mut Bones,
+    seated: &Seated,
+    parents: &[Bone],
+    shares: &[(Bone, f32)],
+    axis: Vec3,
+    angle: f32,
+) {
+    let Some(mut parent) = model_place(transforms, seated, parents) else {
+        return;
+    };
+    for &(bone, share) in shares {
+        let Ok(mut t) = transforms.get_mut(seated.bone(bone)) else {
+            return;
+        };
+        let turn = Quat::from_axis_angle(axis, angle * share);
+        t.rotation = (parent.rotation.inverse() * turn * parent.rotation * t.rotation).normalize();
+        parent = parent.then(&t);
+    }
+}
+
+/// Gira el torso de `seated` `twist` radianes sobre el eje de su columna y la
+/// cabeza `look` más sobre el de su cuello (positivo a su izquierda). Devuelve
+/// el giro del torso, para llevarle el codo.
+fn turn_torso(transforms: &mut Bones, seated: &Seated, [twist, look]: [f32; 2]) -> Quat {
+    let hips = [Bone::Root, Bone::Pelvis];
+    let to_neck = [
+        Bone::Root,
+        Bone::Pelvis,
+        Bone::Spine1,
+        Bone::Spine2,
+        Bone::Spine3,
+        Bone::Neck,
+    ];
+    let axis = |from: &[Bone], to: &[Bone], transforms: &Bones| {
+        let (a, b) = (
+            model_place(transforms, seated, from)?.translation,
+            model_place(transforms, seated, to)?.translation,
+        );
+        (b - a).try_normalize()
+    };
+    let Some(spine) = axis(&to_neck[..3], &to_neck, transforms) else {
+        return Quat::IDENTITY;
+    };
+    turn_chain(transforms, seated, &hips, &TWIST_SHARES, spine, twist);
+    let mut to_head = to_neck.to_vec();
+    to_head.push(Bone::Head);
+    if let Some(neck) = axis(&to_neck, &to_head, transforms) {
+        turn_chain(transforms, seated, &to_neck[..5], &LOOK_SHARES, neck, look);
+    }
+    Quat::from_axis_angle(spine, twist)
+}
 
 /// El personaje que dispara con el modelo de `riding` (en ancas si `behind`):
 /// el dueño del caballo, si tiene [`Shooting`] y este modelo es quien tira
@@ -1886,36 +2029,71 @@ pub(super) fn right_hand(seated: &Seated) -> Entity {
     seated.bone(Bone::Hand(1))
 }
 
-/// Estira el brazo derecho de cada uno que dispara ([`Shooting`]) hacia su
-/// blanco, después de que [`pose_riders`] lo puso en pose y antes de que se
-/// calculen los transforms. El blanco pasa al espacio del modelo con la
-/// ubicación del frame anterior: un frame de atraso no se ve.
+/// Los modelos sentados que [`aim_shooters`] puede dar vuelta para tirar.
+type Shooters = (
+    Entity,
+    &'static Rig,
+    &'static Riding,
+    &'static Seated,
+    Option<&'static Behind>,
+    Option<&'static mut RiderMotion>,
+);
+
+/// Cada uno que dispara ([`Shooting`]) se da vuelta hacia su blanco: gira el
+/// torso sobre la columna y la cabeza sobre el cuello ([`aim_turn`]), y estira
+/// el brazo derecho desde el hombro ya girado; al dejar de tirar vuelve a
+/// mirar adelante, con el mismo resorte. Corre después de que [`pose_riders`]
+/// lo puso en pose y antes de que se calculen los transforms. El blanco pasa
+/// al espacio del modelo con la ubicación del frame anterior: un frame de
+/// atraso no se ve.
 pub(super) fn aim_shooters(
-    riders: Query<(Entity, &Rig, &Riding, &Seated, Option<&Behind>)>,
+    time: Res<Time>,
+    mut riders: Query<Shooters>,
     shooting: Query<(&Shooting, Has<Pillion>)>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
     mut transforms: Bones,
 ) {
-    for (me, rig, riding, seated, behind) in &riders {
+    let dt = time.delta_secs();
+    for (me, rig, riding, seated, behind, motion) in &mut riders {
         if rig.frozen || !rig.started {
             continue;
         }
         let doubled = |c: Entity| shooting.get(c).ok().map(|(_, d)| d);
-        let Some(character) = shooter(riding, behind, &parents, doubled) else {
-            continue;
+        let shot = shooter(riding, behind, &parents, doubled)
+            .and_then(|c| shooting.get(c).ok())
+            .map(|(shot, _)| shot);
+        let target = shot
+            .zip(globals.get(me).ok())
+            .map(|(shot, model)| model.affine().inverse().transform_point3(shot.at));
+        let axes = body_axes(&transforms, seated);
+        let want = target.zip(axes).map_or([0.0; 2], |(t, (axes, chest))| {
+            aim_turn(bearing(axes.transpose() * (t - chest)))
+        });
+        let turn = match motion {
+            Some(mut m) => [0, 1].map(|i| m.aim[i].step(want[i], TWIST_EASE, dt)),
+            None => want,
         };
-        let (Ok((shot, _)), Ok(model)) = (shooting.get(character), globals.get(me)) else {
-            continue;
+        let turned = if turn.iter().any(|a| a.abs() > 1e-4) {
+            turn_torso(&mut transforms, seated, turn)
+        } else {
+            Quat::IDENTITY
         };
-        let target = model.affine().inverse().transform_point3(shot.at);
-        aim_arm(&mut transforms, seated, target);
+        if let Some((target, (axes, _))) = target.zip(axes) {
+            aim_arm(
+                &mut transforms,
+                seated,
+                target,
+                turned * (axes * AIM_ELBOW_POLE),
+            );
+        }
     }
 }
 
 /// Lleva la mano derecha de `seated` hacia `target` (espacio del modelo), con
-/// el brazo casi estirado ([`AIM_REACH`]) y el codo hacia [`AIM_ELBOW_POLE`].
-fn aim_arm(transforms: &mut Bones, seated: &Seated, target: Vec3) {
+/// el brazo casi estirado ([`AIM_REACH`]) y el codo hacia `pole`
+/// ([`AIM_ELBOW_POLE`] girado con el torso).
+fn aim_arm(transforms: &mut Bones, seated: &Seated, target: Vec3, pole: Vec3) {
     let chain = [
         Bone::Root,
         Bone::Pelvis,
@@ -1945,7 +2123,7 @@ fn aim_arm(transforms: &mut Bones, seated: &Seated, target: Vec3) {
         shoulder,
         arm,
         joint + toward * (length * AIM_REACH),
-        AIM_ELBOW_POLE,
+        pole,
     );
 }
 
@@ -3560,6 +3738,118 @@ pub(crate) mod tests {
         }
         assert_eq!(gun_parts(&mut app), (0, None));
         assert!(aimed(&mut app, pillion, target) < 0.9, "the arm comes down");
+    }
+
+    /// El giro de `bone` de `model`, en el espacio del modelo, y dónde está.
+    fn model_bone(app: &mut App, model: Entity, bone: Bone) -> (Quat, Vec3) {
+        let world = app.world_mut();
+        let seated = world.get::<Seated>(model).unwrap().clone();
+        let root = world
+            .get::<GlobalTransform>(model)
+            .unwrap()
+            .affine()
+            .inverse();
+        let g = world.get::<GlobalTransform>(seated.bone(bone)).unwrap();
+        let (_, rotation, _) = (root * g.affine()).to_scale_rotation_translation();
+        (rotation, root.transform_point3(g.translation()))
+    }
+
+    /// Los ejes del cuerpo de `model` en su pose de ahora: izquierda, arriba
+    /// y frente, en el espacio del modelo.
+    fn axes_of(app: &mut App, model: Entity) -> Mat3 {
+        let at = |app: &mut App, b| model_bone(app, model, b).1;
+        let up = (at(app, Bone::Neck) - at(app, Bone::Spine1)).normalize();
+        let left = (at(app, Bone::UpperArm(0)) - at(app, Bone::UpperArm(1)))
+            .reject_from(up)
+            .normalize();
+        Mat3::from_cols(left, up, left.cross(up))
+    }
+
+    /// Cuánto giró `now` respecto de `rest` alrededor de la vertical del
+    /// cuerpo (`axes`, en reposo), en radianes: positivo a su izquierda.
+    fn yaw_between(axes: Mat3, rest: Quat, now: Quat) -> f32 {
+        let f = axes.transpose() * ((now * rest.inverse()) * axes.z_axis);
+        f.x.atan2(f.z)
+    }
+
+    #[test]
+    fn shooting_back_he_turns_his_chest_and_looks_back_with_the_arm_out_at_his_side() {
+        let (mut app, me) = seated(
+            CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::Bayo,
+            },
+            0.0,
+        );
+        app.world_mut()
+            .entity_mut(me)
+            .insert(Pillion(FigureKind::Bairoletto));
+        let pillion = started_rider(&mut app, true);
+        let front = started_rider(&mut app, false);
+        for _ in 0..4 {
+            app.update();
+        }
+        let axes = axes_of(&mut app, pillion);
+        let (chest0, _) = model_bone(&mut app, pillion, Bone::Spine3);
+        let (head0, _) = model_bone(&mut app, pillion, Bone::Head);
+        // Un milico justo atrás, a caballo: en la línea del jinete al que va
+        // en ancas, 14 m más allá.
+        let waist = |app: &mut App, model: Entity| {
+            let world = app.world_mut();
+            let seated = world.get::<Seated>(model).unwrap().clone();
+            world
+                .get::<GlobalTransform>(seated.bone(Bone::Spine1))
+                .unwrap()
+                .translation()
+        };
+        let (mine, ahead) = (waist(&mut app, pillion), waist(&mut app, front));
+        let back = (mine - ahead).reject_from(Vec3::Y).normalize();
+        let target = mine + back * 14.0 + Vec3::Y * 0.3;
+        app.world_mut().entity_mut(me).insert(Shooting {
+            at: target,
+            flash: 1.0,
+        });
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(aimed(&mut app, pillion, target) > 0.97, "aimed at him");
+        // Gira el pecho hacia su derecha, el lado del revólver.
+        let (chest, at) = model_bone(&mut app, pillion, Bone::Spine3);
+        let turn = yaw_between(axes, chest0, chest);
+        assert!(
+            (-90f32.to_radians()..-50f32.to_radians()).contains(&turn),
+            "chest turned {}°",
+            turn.to_degrees()
+        );
+        // La cabeza sigue más allá, por encima del hombro.
+        let (head, _) = model_bone(&mut app, pillion, Bone::Head);
+        let look = yaw_between(axes, head0, head);
+        assert!(
+            look < turn - 30f32.to_radians(),
+            "looks back {}°",
+            look.to_degrees()
+        );
+        // El brazo sale por su costado derecho, no por detrás de la espalda.
+        let (_, hand) = model_bone(&mut app, pillion, Bone::Hand(1));
+        let side = axes.transpose() * (Quat::from_axis_angle(axes.y_axis, -turn) * (hand - at));
+        assert!(side.x < -0.3, "out at his right side: {side}");
+        assert!(side.z > -0.35, "not behind his back: {side}");
+        // Deja de tirar: vuelve a mirar adelante, sin golpe.
+        app.world_mut().entity_mut(me).remove::<Shooting>();
+        app.update();
+        let (chest, _) = model_bone(&mut app, pillion, Bone::Spine3);
+        assert!(
+            yaw_between(axes, chest0, chest) < -20f32.to_radians(),
+            "eases back, does not snap"
+        );
+        for _ in 0..40 {
+            app.update();
+        }
+        let (chest, _) = model_bone(&mut app, pillion, Bone::Spine3);
+        assert!(
+            yaw_between(axes, chest0, chest).abs() < 5f32.to_radians(),
+            "faces ahead"
+        );
     }
 
     #[test]

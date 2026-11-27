@@ -27,8 +27,8 @@ use pampa_core::{
     Revolver, Rider, Vec2, chaser_params, in_cover, in_sight, outrun, pursue, rein_in,
 };
 use pampa_render::{
-    CharacterVisual, Coat, FigureKind, Pillion, Shooting, VisualPose, WorldClock, WorldFlora,
-    WorldTowns, world_from_ground,
+    CharacterVisual, Coat, FigureKind, MapIcon, Pillion, Shooting, VisualPose, WorldClock,
+    WorldFlora, WorldTowns, world_from_ground,
 };
 
 use crate::errand::ErrandRun;
@@ -348,6 +348,7 @@ pub fn mount(commands: &mut Commands, saddle: Saddle, world: &pampa_core::World)
             unseen: 0.0,
         },
         Name::new(format!("Milico {} mounted", saddle.look)),
+        MapIcon::Chaser,
         CharacterVisual::Mounted {
             rider: FigureKind::Milico(saddle.look),
             coat: coat(saddle.look),
@@ -411,7 +412,12 @@ pub fn ride_after(
             let seen = in_sight(&world.0, &crowns, milico.rider.position, quarry.position);
             milico.unseen = if seen { 0.0 } else { milico.unseen + dt };
         }
+        let chasing = !milico.back;
         milico.back |= !carrying || outrun(lead, covered) || milico.unseen >= LOST_SIGHT_SECONDS;
+        // Al abandonar deja de marcarse en el mapa.
+        if chasing && milico.back {
+            commands.entity(me).remove::<MapIcon>();
+        }
         let home = milico.home;
         if milico.back && (lead > OUT_OF_SIGHT || milico.rider.position.distance(home) < HOME) {
             commands.entity(me).despawn();
@@ -501,10 +507,19 @@ mod tests {
                 fire: ReturnFire::new(0),
                 unseen: 0.0,
             },
+            pampa_render::MapIcon::Chaser,
             Transform::default(),
             VisualPose::default(),
         ));
         app
+    }
+
+    /// Si el milico sigue marcado en el mapa como perseguidor.
+    fn marked(app: &mut App) -> bool {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(), (With<Milico>, With<pampa_render::MapIcon>)>();
+        q.iter(app.world()).count() == 1
     }
 
     fn milico(app: &mut App) -> Milico {
@@ -671,10 +686,12 @@ mod tests {
             app.update();
         }
         assert!(!milico_back(&mut app), "still after him");
+        assert!(marked(&mut app), "a chaser on the map");
         for _ in 0..seconds(1.0) {
             app.update();
         }
         assert!(milico_back(&mut app), "lost him");
+        assert!(!marked(&mut app), "riding back, off the map");
     }
 
     #[test]

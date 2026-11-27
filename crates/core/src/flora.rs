@@ -266,13 +266,6 @@ pub struct FloraSite {
     seed: u32,
 }
 
-/// Cada cuántos metros crece el anillo de [`FloraSite::nearest_monte`].
-const MONTE_RING: f32 = 100.0;
-/// Hasta qué distancia busca monte [`FloraSite::nearest_monte`], en metros.
-const MONTE_REACH: f32 = 12_000.0;
-/// En cuántos rumbos mira cada anillo de [`FloraSite::nearest_monte`].
-const MONTE_BEARINGS: usize = 72;
-
 impl FloraSite {
     /// El máximo de árboles que planta un chunk: los del monte. Las isletas,
     /// tan densas como siempre, se detienen en [`Self::GROVE_BUDGET`]. Los
@@ -744,35 +737,6 @@ impl FloraSite {
     /// es pasto abierto con sus árboles dispersos y sus isletas.
     pub fn monte(&self, p: Vec2) -> f32 {
         self.monte_wide(p, self.fiscal_widen(p))
-    }
-
-    /// Desde cuánto [`Self::monte`] un lugar es monte cerrado: el umbral de los
-    /// felinos ([`crate::FaunaSite::MONTE`]).
-    pub const MONTE_DENSE: f32 = 0.5;
-
-    /// El monte cerrado más cercano a `from` a partir de `min_radius` metros
-    /// (para salir del campo raleado que rodea un pueblo,
-    /// [`Self::TOWN_NEAR`]): recorre anillos cada [`MONTE_RING`] metros hacia
-    /// afuera, hasta [`MONTE_REACH`], y en el primero que toca monte cerrado
-    /// ([`Self::MONTE_DENSE`]) se queda con el punto más espeso. Determinista;
-    /// `None` si no hay monte en ese alcance.
-    pub fn nearest_monte(&self, from: Vec2, min_radius: f32) -> Option<Vec2> {
-        let mut radius = min_radius;
-        while radius <= MONTE_REACH {
-            let best = (0..MONTE_BEARINGS)
-                .map(|i| {
-                    let angle = std::f32::consts::TAU * i as f32 / MONTE_BEARINGS as f32;
-                    from + Vec2::new(angle.cos(), angle.sin()) * radius
-                })
-                .map(|p| (p, self.monte(p)))
-                .filter(|&(_, m)| m >= Self::MONTE_DENSE)
-                .max_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((p, _)) = best {
-                return Some(p);
-            }
-            radius += MONTE_RING;
-        }
-        None
     }
 
     /// [`Self::monte`] con sus bordes bajados en `widen`, para que las manchas
@@ -1779,34 +1743,6 @@ pub(crate) mod tests {
         (0..14)
             .flat_map(|x| (-11..1).map(move |y| ChunkCoord::new(x, y)))
             .collect()
-    }
-
-    #[test]
-    fn the_nearest_monte_is_dense_beyond_the_given_radius_and_nothing_closer_is() {
-        let (_, _, site) = redistributed();
-        let min = 300.0;
-        let mut searched = 0;
-        // Desde varios lugares: en algunos el monte está al lado, en otros
-        // hay que buscarlo varios anillos más afuera.
-        for k in 0..12 {
-            let from =
-                TownConfig::castex().origin + Vec2::new(k as f32 * 1700.0, k as f32 * -900.0);
-            let at = site.nearest_monte(from, min).expect("monte within reach");
-            let r = at.distance(from);
-            assert!(site.monte(at) >= FloraSite::MONTE_DENSE, "{from:?}");
-            assert!(r >= min - 0.1, "{r}");
-            // Ningún anillo anterior toca monte cerrado.
-            let mut inner = min;
-            while inner < r - 1.0 {
-                assert!((0..MONTE_BEARINGS).all(|i| {
-                    let a = std::f32::consts::TAU * i as f32 / MONTE_BEARINGS as f32;
-                    site.monte(from + Vec2::new(a.cos(), a.sin()) * inner) < FloraSite::MONTE_DENSE
-                }));
-                inner += MONTE_RING;
-                searched += 1;
-            }
-        }
-        assert!(searched > 0, "some place has no monte on its first ring");
     }
 
     #[test]

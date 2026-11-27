@@ -274,7 +274,6 @@ impl Plugin for ErrandPlugin {
                 Update,
                 (
                     hail,
-                    crate::escape::find_hideout,
                     crate::escape::wait_at_door,
                     crate::escape::set_off,
                     interact,
@@ -602,7 +601,7 @@ pub(crate) fn interact(
             saddle.ride(me, &mut player.rider, &mut transform, &horse);
         }
         // Empiezan solos, al llegar ([`crate::escape::set_off`]).
-        ErrandEvent::Rendezvous | ErrandEvent::ReachedHideout => {}
+        ErrandEvent::Rendezvous | ErrandEvent::ShookOff => {}
     }
 }
 
@@ -1534,18 +1533,22 @@ mod tests {
     }
 
     #[test]
-    fn at_night_bairoletto_rides_off_en_ancas_to_the_monte_pays_a_peso_and_leaves() {
+    fn at_night_bairoletto_rides_off_en_ancas_and_once_they_lose_the_milicada_pays_a_peso_and_leaves()
+     {
         let mut app = shipped_app();
         ride_to_farach(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
-        // Solo el acto 6, con el monte a mano.
+        // Solo el acto 6.
         let steps = shipped_lines().steps[4..].to_vec();
         let porch = errand(&app).porch().unwrap();
-        let monte = porch.position + porch.heading.forward() * 200.0;
         {
             let mut run = app.world_mut().resource_mut::<ErrandRun>();
-            run.0 = run.0.clone().with_story(steps).with_hideout(monte);
+            run.0 = run.0.clone().with_story(steps);
         }
+        // Un lugar cualquiera del campo, fuera del pueblo.
+        let town = app.world().resource::<WorldTowns>().0[porch.town].extent();
+        let field = porch.position + porch.heading.forward() * town.size().length();
+        assert!(!town.contains_point(field));
         activate_around(&mut app, porch.position);
         let tano_at_door = |app: &mut App| {
             let mut q = app
@@ -1636,12 +1639,12 @@ mod tests {
             Some(&pampa_render::Pillion(FigureKind::Bairoletto))
         );
         assert_eq!(tano_at_door(&mut app), None);
-        // Libre otra vez, rumbo al monte.
+        // Libre otra vez, a perderlos por el campo: sin marca en el mapa.
         app.update();
         assert!(!app.world().resource::<ControlLock>().0);
         assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
         assert_eq!(objective(&app), shipped_objective(5));
-        assert_eq!(app.world().resource::<MapTarget>().0, Some(monte));
+        assert_eq!(app.world().resource::<MapTarget>().0, None);
 
         // Mientras no arranca, la milicada sigue adentro.
         let milicos = |app: &mut App| {
@@ -1685,6 +1688,15 @@ mod tests {
             tied(&mut app).is_empty(),
             "their horses are gone from the post"
         );
+        let mut q = app
+            .world_mut()
+            .query::<(&crate::chase::Milico, &pampa_render::MapIcon)>();
+        assert!(
+            q.iter(app.world())
+                .all(|(_, icon)| *icon == pampa_render::MapIcon::Chaser),
+            "chasers on the map"
+        );
+        assert_eq!(q.iter(app.world()).count(), crate::chase::MILICOS);
         for (at, look) in &up {
             assert!(
                 horses.iter().any(|h| h.distance(*at) < 3.0),
@@ -1713,9 +1725,15 @@ mod tests {
                 .map(|(at, _)| at.distance(me))
                 .fold(f32::INFINITY, f32::min)
         };
-        // Con la milicada detrás, en el monte Bairoletto no se baja, y se le
-        // vienen encima.
-        teleport(&mut app, monte + GroundVec2::new(10.0, 0.0));
+        // Con la milicada detrás, en el campo Bairoletto no se baja, y se le
+        // vienen encima. La persecución pasa de golpe al campo, con la
+        // milicada 100 m atrás.
+        let shift = field - player(&mut app).1.rider.position - porch.heading.forward() * 100.0;
+        teleport(&mut app, field);
+        let mut q = app.world_mut().query::<&mut crate::chase::Milico>();
+        for mut milico in q.iter_mut(app.world_mut()) {
+            milico.rider.position += shift;
+        }
         let far = nearest(&mut app);
         // Menos que los segundos sin verlo que los hacen abandonar.
         for _ in 0..60 {
@@ -1725,14 +1743,13 @@ mod tests {
         assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
         assert!(nearest(&mut app) < far - 10.0, "they gallop after him");
         // Sacándoles más de 300 m abandonan, y fuera de vista desaparecen.
-        teleport(&mut app, monte + porch.heading.forward() * 1000.0);
-        app.update();
-        assert!(milicos(&mut app).is_empty(), "lost them");
-
-        // En el monte se baja, le paga $ 1 y se va hasta perderse.
+        // Perdidos, ahí mismo se baja, le paga $ 1 y se va hasta perderse.
         let paid = wallet(&app);
         let before = said(&app).len();
-        teleport(&mut app, monte + GroundVec2::new(10.0, 0.0));
+        teleport(&mut app, field + porch.heading.forward() * 1000.0);
+        app.update();
+        assert!(milicos(&mut app).is_empty(), "lost them");
+        // Al frame siguiente, ahí mismo, sin llegar a ningún lado.
         app.update();
         play_out(&mut app, 60.0, |_| {});
         assert_eq!(said(&app)[before..].to_vec(), scene_shown(5));
@@ -1755,14 +1772,6 @@ mod tests {
         }
         assert!(gone(&mut app), "he walks off and fades away");
         assert_eq!(tano_at_door(&mut app), None);
-        // Y la milicada abandona y vuelve a la comisaría hasta perderse.
-        for _ in 0..1200 {
-            if milicos(&mut app).is_empty() {
-                break;
-            }
-            app.update();
-        }
-        assert!(milicos(&mut app).is_empty(), "the milicada gives up");
     }
 
     /// El mundo incluido con el pueblo `town` activo y el resto no, como si el

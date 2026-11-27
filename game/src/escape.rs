@@ -3,10 +3,9 @@
 //! la puerta de La Colonia ([`wait_at_door`]). Cuando el jugador llega hasta él
 //! a caballo empieza la escena ([`set_off`]). Bairoletto habla y entra; se oye
 //! el disparo y el tumulto; sale corriendo y se sube en ancas
-//! ([`pampa_render::Pillion`]). Después el jugador maneja hasta el monte más
-//! cercano ([`find_hideout`]), con la milicada detrás ([`crate::chase`]). Una
-//! vez que la perdió, en el monte Bairoletto se baja, le paga y se va caminando
-//! hasta perderse.
+//! ([`pampa_render::Pillion`]). Después el jugador huye por el campo, con la
+//! milicada detrás ([`crate::chase`]). Donde sea que la pierda, fuera del
+//! pueblo, Bairoletto se baja, le paga y se va caminando hasta perderse.
 //!
 //! `pampa-core` es dueño de las reglas: cuándo espera, cuándo se cumple cada
 //! paso y dónde está el monte. Las líneas y las indicaciones de escena
@@ -16,8 +15,7 @@
 use bevy::prelude::*;
 use pampa_core::{AnimationState, Cue, ErrandStage, Heading, MAX_STEP, Npc, Standing, Vec2};
 use pampa_render::{
-    CharacterVisual, FigureKind, Pillion, VisualPose, WorldClock, WorldFlora, WorldTowns,
-    world_from_ground,
+    CharacterVisual, FigureKind, Pillion, VisualPose, WorldClock, WorldTowns, world_from_ground,
 };
 
 use pampa_render::character::Fading;
@@ -26,11 +24,6 @@ use crate::errand::{Approach, Conversation, ErrandDialogue, ErrandProgress, Erra
 use crate::life::{FADE_SECONDS, LEAVING_PACE, Populated, StandingNpc, npc_figure, pulperia_floor};
 use crate::player::{GameWorld, Player};
 use crate::pulperia::HeldOpen;
-
-/// A partir de qué distancia del centro del pueblo de Farach se busca el
-/// monte, en metros: pasado el campo raleado que rodea al pueblo
-/// ([`pampa_core::FloraSite::TOWN_NEAR`]) y la mitad de su cuadrícula.
-pub const HIDEOUT_FROM: f32 = pampa_core::FloraSite::TOWN_NEAR + 300.0;
 
 /// Cuánto camina Bairoletto adentro de la pulpería, desde la puerta, antes de
 /// perderse, en metros.
@@ -83,39 +76,6 @@ pub struct Scripted {
     pub then: Then,
 }
 
-/// El monte de la huida: el más cercano al pueblo de Farach, desde
-/// [`HIDEOUT_FROM`] ([`pampa_core::FloraSite::nearest_monte`]). Se busca una
-/// sola vez, cuando hay flora y el acto 6 está por llegar o en curso.
-pub(crate) fn find_hideout(
-    errand: Option<ResMut<ErrandRun>>,
-    flora: Option<Res<WorldFlora>>,
-    towns: Option<Res<WorldTowns>>,
-    mut tried: Local<bool>,
-) {
-    let (Some(mut errand), Some(flora), Some(towns)) = (errand, flora, towns) else {
-        return;
-    };
-    if *tried || errand.0.hideout().is_some() {
-        return;
-    }
-    let due = matches!(
-        errand.0.stage(),
-        ErrandStage::Rendezvous | ErrandStage::Hideout
-    );
-    if !due {
-        return;
-    }
-    *tried = true;
-    let town = errand.0.standing(Npc::Farach).town;
-    let Some(layout) = towns.0.get(town) else {
-        return;
-    };
-    match flora.0.nearest_monte(layout.grid().center(), HIDEOUT_FROM) {
-        Some(at) => errand.0 = errand.0.clone().with_hideout(at),
-        None => warn!("act 6: no monte near {}", layout.name),
-    }
-}
-
 /// De noche, mientras el acto 6 espera, Bairoletto está parado en la vereda
 /// frente a la puerta de La Colonia, con el pueblo poblado
 /// ([`pampa_core::Errand::place`]); de día no está. Durante una escena no se
@@ -166,10 +126,11 @@ pub(crate) fn wait_at_door(
 }
 
 /// Los pasos del acto 6 que empiezan solos, al llegar: de noche, a caballo,
-/// hasta Bairoletto en la puerta ([`pampa_core::Errand::rendezvous`]); y al
-/// monte ([`pampa_core::Errand::reach_hideout`]). Al llegar al monte,
-/// Bairoletto ya cuenta como parado junto al caballo, donde se va a bajar,
-/// para que la cámara lo encuadre mientras el caballo frena.
+/// hasta Bairoletto en la puerta ([`pampa_core::Errand::rendezvous`]); y la
+/// huida, en cuanto la milicada lo perdió en el campo
+/// ([`pampa_core::Errand::shake_off`]). Ahí Bairoletto ya cuenta como parado
+/// junto al caballo, donde se va a bajar, para que la cámara lo encuadre
+/// mientras el caballo frena.
 pub(crate) fn set_off(
     (errand, dialogue): (Option<ResMut<ErrandRun>>, Option<Res<ErrandDialogue>>),
     clock: Option<Res<WorldClock>>,
@@ -177,7 +138,7 @@ pub(crate) fn set_off(
     players: Query<&Player>,
     mut progress: MessageWriter<ErrandProgress>,
     (mut held, mut asked): (ResMut<HeldOpen>, Local<bool>),
-    milicos: Query<&crate::chase::Milico>,
+    (milicos, towns): (Query<&crate::chase::Milico>, Option<Res<WorldTowns>>),
 ) {
     let (Some(mut errand), Ok(player)) = (errand, players.single()) else {
         return;
@@ -204,12 +165,15 @@ pub(crate) fn set_off(
     *asked = asking;
     let event = match errand.0.stage() {
         ErrandStage::Rendezvous => errand.0.rendezvous(at, travel, time),
-        // Con la milicada todavía detrás, Bairoletto no se baja.
-        ErrandStage::Hideout if milicos.iter().any(|m| !m.back) => None,
         ErrandStage::Hideout => {
-            let event = errand.0.reach_hideout(at);
+            // Perdida: ninguno la sigue (abandonan y se van).
+            let lost = milicos.iter().all(|m| m.back);
+            let town = errand.0.standing(Npc::Farach).town;
+            let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town)) else {
+                return;
+            };
+            let event = errand.0.shake_off(at, layout.extent(), lost);
             if event.is_some() {
-                let town = errand.0.standing(Npc::Farach).town;
                 errand.0.place(beside_horse(player, town));
             }
             event

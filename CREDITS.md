@@ -320,6 +320,12 @@ The title and pause menus' pictures are baked by `tools/menu_poster.sh` from the
 | Police photographs of Mate Cosido (Segundo David Peralta), profile and front | Argentine police photographs, 1930s (Peralta disappeared in 1940); author unknown. Copy from Infobae, "La increíble vida de Mate Cosido" (2023-07-28, https://www.infobae.com/sociedad/2023/07/28/la-increible-vida-de-mate-cosido-el-bandido-de-los-pobres-repartia-lo-robado-y-nunca-fue-atrapado/), which credits no source | Public domain in Argentina: photographs are protected for 25 years from publication (Ley 11.723 art. 34). A faithful copy adds no new rights. Assessed by the project, not by a licence notice | `assets/menu/sources/mate_cosido.png` | Converted from WebP to PNG; in the poster, the front shot cropped, black and white |
 | Menu music `menu_2.mp3` | The Pampa Salvaje project's own song | Same as the project | `assets/menu/menu_2.mp3` | None |
 
+## Sounds
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| The Free Firearm Sound Library, `Smith & Wesson 642/V_27P.wav` (the shots of Bairoletto and the milicos) | Ben Jaszczak, Brian Nelson, Kevin Heras, Matthew Nanney; OpenGameArt (https://opengameart.org/content/the-free-firearm-sound-library) | CC0 1.0 | `assets/sounds/revolver.mp3` | Downloaded 2026-11-27: the first near shot cut out (2.6 s with its echo), faded in and out, loudness-normalized, WAV 96 kHz to MP3 44.1 kHz. See `assets/sounds/CREDITS.md` |
+
 ## Fonts
 
 | Asset | Author / source | Licence | Where | Changes |

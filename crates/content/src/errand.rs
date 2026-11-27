@@ -302,7 +302,7 @@ impl ErrandLines {
                 },
                 Step {
                     goal: Goal::Hideout,
-                    objective: Some("Escapá al monte".into()),
+                    objective: Some("Perdé a la milicada en el campo".into()),
                     scene: vec![
                         Beat::Cue(Cue::GetOff),
                         say(

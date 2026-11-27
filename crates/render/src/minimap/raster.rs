@@ -192,6 +192,8 @@ pub mod palette {
     pub const PLAYER: [u8; 4] = [196, 40, 28, 255];
     pub const TRAIN: [u8; 4] = [28, 26, 26, 255];
     pub const TARGET: [u8; 4] = [232, 176, 32, 255];
+    /// Los perseguidores: el azul de los uniformes de la policía.
+    pub const CHASER: [u8; 4] = [38, 56, 104, 255];
     /// Árboles: un punto verde oscuro cada uno.
     pub const TREE: [u8; 4] = [96, 110, 60, 255];
     /// Las huellas de un asentamiento: una línea de tierra pálida, más clara
@@ -691,13 +693,16 @@ pub struct Markers {
     pub cars: Vec<PlacedCar>,
     /// Adónde envía el mandado al jugador, si a algún lado.
     pub target: Option<GroundVec2>,
+    /// Quienes persiguen al jugador.
+    pub chasers: Vec<GroundVec2>,
 }
 
 /// Limpia `canvas` y dibuja los marcadores: los vagones del tren como barras
 /// oscuras (omitidos fuera del mapa), el destino del
-/// mandado como un rombo dorado y el jugador como una flecha según su rumbo. El
-/// destino y el jugador se fijan en el borde cuando están afuera, así que
-/// señalan el camino. Devuelve la posición del marcador del jugador, si la hay.
+/// mandado como un rombo dorado, los perseguidores como puntos azules y el
+/// jugador como una flecha según su rumbo. El destino, los perseguidores y el
+/// jugador se fijan en el borde cuando están afuera, así que señalan el
+/// camino. Devuelve la posición del marcador del jugador, si la hay.
 pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) -> Option<Vec2> {
     canvas.clear();
     draw_compass(canvas, frame);
@@ -719,6 +724,10 @@ pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) ->
     if let Some(target) = markers.target {
         let (at, _) = frame.to_map_clamped(target);
         diamond(canvas, at);
+    }
+    for &chaser in &markers.chasers {
+        let (at, _) = frame.to_map_clamped(chaser);
+        dot(canvas, at, palette::CHASER);
     }
     let (position, heading) = markers.player?;
     let (at, _) = frame.to_map_clamped(position);
@@ -748,6 +757,22 @@ fn diamond(canvas: &mut Canvas, at: Vec2) {
             if d < r {
                 canvas.set(x, y, palette::TARGET);
             } else if d <= r {
+                canvas.set(x, y, palette::INK);
+            }
+        }
+    }
+}
+
+/// Un punto de `color` con contorno de tinta, centrado en `at`.
+fn dot(canvas: &mut Canvas, at: Vec2, color: [u8; 4]) {
+    let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
+    let r = 3;
+    for y in cy - r - 1..=cy + r + 1 {
+        for x in cx - r - 1..=cx + r + 1 {
+            let d2 = (x - cx).pow(2) + (y - cy).pow(2);
+            if d2 <= r * r {
+                canvas.set(x, y, color);
+            } else if d2 <= (r + 1) * (r + 1) {
                 canvas.set(x, y, palette::INK);
             }
         }
@@ -1199,7 +1224,7 @@ pub(crate) mod tests {
         let markers = Markers {
             player: Some((GroundVec2::new(500.0, 0.0), Heading::from_radians(0.0))),
             cars: vec![car, away],
-            target: None,
+            ..Markers::default()
         };
         let player = draw_markers(&mut canvas, &frame, &markers).unwrap();
         assert!(close(player, Vec2::new(200.0 - EDGE, 100.0)));
