@@ -63,7 +63,7 @@ pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{
-    Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Stall, Standing,
+    Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Stall, Standing, Whereabouts,
 };
 pub use fauna::{
     Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,

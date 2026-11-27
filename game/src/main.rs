@@ -40,8 +40,8 @@ use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
     HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
     SignPlugin, SpeechBubblePlugin, StallPlugin, StreamFocus, TerrainPlugin, ThinFadePlugin,
-    TownPlugin, TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences, WorldFlora,
-    WorldLamps, WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
+    TitleCardPlugin, TownPlugin, TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences,
+    WorldFlora, WorldLamps, WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
 };
 
 /// Los ajustes de los modelos de terceros en las ranuras de modelo
@@ -391,7 +391,7 @@ fn main() {
     ))
     // Subir, viajar, omitir y esperar el tren, con un fundido para tapar los
     // saltos en el tiempo.
-    .add_plugins((ride::RidePlugin, FadePlugin))
+    .add_plugins((ride::RidePlugin, FadePlugin, TitleCardPlugin))
     .add_systems(Startup, towns::log_town_report)
     .add_systems(Startup, move || {
         let LaidReport {

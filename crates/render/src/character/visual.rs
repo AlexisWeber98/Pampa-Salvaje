@@ -25,7 +25,7 @@ use super::rider::{
     OnBench, Riding, carry_stirrups, pose_riders, seat_pillions, seat_riders, seat_transform,
     spawn_riders,
 };
-use super::rig::{drive_rigs, fit_rigs};
+use super::rig::{count_fallen, drive_rigs, fit_rigs};
 use super::tack::{PendingTack, TackBuilt, dress_pending, dress_tack, load_recado, stretch_straps};
 use super::townsfolk::TintCache;
 use super::viewer::mark_viewer_head;
@@ -122,7 +122,7 @@ impl Plugin for CharacterVisualPlugin {
                 )
                     .chain(),
             )
-            .add_systems(Update, super::pastime::hold_things)
+            .add_systems(Update, (super::pastime::hold_things, count_fallen))
             .add_systems(
                 PostUpdate,
                 (super::pastime::drift_smoke, super::pastime::tilt_glasses)

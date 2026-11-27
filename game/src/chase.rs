@@ -27,8 +27,8 @@ use pampa_core::{
     Revolver, Rider, Vec2, chaser_params, in_cover, in_sight, outrun, pursue, rein_in,
 };
 use pampa_render::{
-    CharacterVisual, Coat, FigureKind, MapIcon, Pillion, Shooting, VisualPose, WorldClock,
-    WorldFlora, WorldTowns, world_from_ground,
+    CharacterVisual, Coat, FigureKind, MapIcon, Pillion, Shooting, TitleCard, VisualPose,
+    WorldClock, WorldFlora, WorldTowns, world_from_ground,
 };
 
 use crate::errand::ErrandRun;
@@ -176,8 +176,9 @@ impl Aim {
     }
 }
 
-/// Un tiro durante la huida: desde dónde, y si fue de Bairoletto (si no, de
-/// un milico). Para el sonido y para los gritos de Bairoletto.
+/// Un tiro: desde dónde, y si fue Bairoletto tirando desde las ancas en la
+/// huida (si no, un milico, o el disparo a Farach adentro de La Colonia, que
+/// solo suena). Para el sonido y para los gritos de Bairoletto.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct Gunshot {
     pub from: Vec2,
@@ -372,6 +373,7 @@ pub fn ride_after(
     time: Res<Time>,
     (world, plants): (Res<GameWorld>, Res<NearbyPlants>),
     (mut gun, mut shots): (ResMut<Gun>, MessageWriter<Gunshot>),
+    mut card: ResMut<TitleCard>,
     players: Query<(Entity, &Player, Has<Pillion>)>,
     mut milicos: Query<(Entity, &mut Milico, &mut Transform, &mut VisualPose)>,
 ) {
@@ -394,6 +396,11 @@ pub fn ride_after(
         .then(|| gun.0.fire(&distances, dt))
         .flatten()
         .map(|i| at_large[i].0);
+    // Sin balas y con un milico encima, lo atrapan: el cartel, y al negro el
+    // acto vuelve a la puerta ([`crate::escape::back_to_the_door`]).
+    if carrying && gun.0.caught(&distances) {
+        card.start(crate::escape::CAUGHT);
+    }
     if let Some(milico) = hit {
         commands.entity(me_player).insert(Aim::fired_at(milico));
         shots.write(Gunshot {
@@ -486,6 +493,7 @@ mod tests {
             )))
             .init_resource::<GameWorld>()
             .init_resource::<Gun>()
+            .init_resource::<TitleCard>()
             .init_resource::<NearbyPlants>()
             .add_message::<Gunshot>()
             .add_systems(Update, ride_after);

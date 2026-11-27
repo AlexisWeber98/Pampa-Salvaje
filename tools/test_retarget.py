@@ -53,6 +53,7 @@ GAME_CLIPS = [
     "sit_talk",
     "sit_drink",
     "sit_smoke",
+    "death",
 ]
 
 

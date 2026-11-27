@@ -76,6 +76,9 @@ const TABLE: (f32, f32) = (1.6, 0.8);
 const BENCH: (f32, f32) = (1.6, 0.35);
 /// Entre el canto de la mesa y el banco, en metros.
 const BENCH_GAP: f32 = 0.1;
+/// A qué distancia del mostrador se para un cliente ([`Interior::at_counter`]),
+/// en metros: a un paso, con las puntas de los pies cerca del canto.
+pub const AT_COUNTER: f32 = 0.55;
 /// El paso libre entre el banco de atrás de una mesa y el mostrador, en
 /// metros.
 const TABLE_AISLE: f32 = 0.9;
@@ -587,6 +590,26 @@ impl Interior {
             .expect("every pulpería has seats facing the door")
     }
 
+    /// Dónde está parado un cliente en el mostrador de la pulpería, y hacia
+    /// dónde mira: del lado de los clientes, a [`AT_COUNTER`] de él, frente a
+    /// la puerta (se lo ve desde ella), mirando al mostrador. Detrás, hasta la
+    /// puerta, está el paso libre. `None` sin mostrador de pulpería.
+    pub fn at_counter(&self) -> Option<(Vec2, Heading)> {
+        let door = self.door;
+        let counter = self
+            .furniture
+            .iter()
+            .find(|f| f.kind == FurnitureKind::Counter)?
+            .footprint;
+        let depth = |p: Vec2| (door.center - p).dot(door.outward);
+        let near = depth(counter.min).min(depth(counter.max));
+        let inward = door.outward * -1.0;
+        Some((
+            door.center + inward * (near - AT_COUNTER),
+            Heading::from_radians(inward.y.atan2(inward.x)),
+        ))
+    }
+
     /// El camino de quien se levanta del asiento `seat` y se va: un paso atrás
     /// del banco, al paso que viene de la puerta, por la puerta hasta la
     /// vereda, y a lo largo de ella hasta perderse de vista. Todo por piso
@@ -883,6 +906,50 @@ mod tests {
             }
         }
         assert!(rooms >= 4, "{rooms}");
+    }
+
+    #[test]
+    fn a_customer_stands_at_the_counter_in_line_with_the_door_with_room_to_fall_back() {
+        const FALL_ROOM: f32 = 1.9;
+        let mut pulperias = 0;
+        for t in crate::town::tests::sample_towns() {
+            let Some((_, inside)) = t.pulperia() else {
+                continue;
+            };
+            pulperias += 1;
+            let (at, facing) = inside.at_counter().expect("a pulpería has a counter");
+            let door = inside.door;
+            let inward = door.outward * -1.0;
+            // Mirando al mostrador, a un paso de él.
+            assert!(facing.forward().dot(inward) > 0.999, "{}", t.name);
+            let ahead = Aabb::from_center_size(at + inward * 0.7, Vec2::new(0.1, 0.1));
+            let counter = |f: &Furniture| f.kind == FurnitureKind::Counter;
+            assert!(
+                inside
+                    .furniture
+                    .iter()
+                    .any(|f| counter(f) && f.footprint.intersects(&ahead)),
+                "{}",
+                t.name
+            );
+            // En línea con la puerta: se lo ve desde ella. Y detrás de él,
+            // hacia la puerta, el piso está libre para caer de espaldas: lo que
+            // ocupa tendido el clip de la caída (las manos quedan a 1,5 m
+            // detrás de los pies), con 45 cm a cada lado.
+            let across = Vec2::new(-door.outward.y, door.outward.x);
+            assert!((at - door.center).dot(across).abs() < 1e-3, "{}", t.name);
+            let o = door.outward;
+            let size = Vec2::new(
+                o.x.abs() * FALL_ROOM + o.y.abs() * 0.9,
+                o.y.abs() * FALL_ROOM + o.x.abs() * 0.9,
+            );
+            let fall = Aabb::from_center_size(at + o * (FALL_ROOM / 2.0), size);
+            assert!(inside.floor.contains(&fall), "{}", t.name);
+            for o in inside.obstacles() {
+                assert!(!o.intersects(&fall), "{}: {o:?}", t.name);
+            }
+        }
+        assert!(pulperias >= 2, "{pulperias}");
     }
 
     #[test]

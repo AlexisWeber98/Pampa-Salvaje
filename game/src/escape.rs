@@ -6,6 +6,9 @@
 //! ([`pampa_render::Pillion`]). Después el jugador huye por el campo, con la
 //! milicada detrás ([`crate::chase`]). Donde sea que la pierda, fuera del
 //! pueblo, Bairoletto se baja, le paga y se va caminando hasta perderse.
+//! Esa noche Farach no está en la puerta de su comisaría: espera adentro de
+//! La Colonia, parado en el mostrador, y al oírse el disparo cae y queda
+//! tendido ahí; terminado el acto ya no está ([`place_farach`]).
 //!
 //! `pampa-core` es dueño de las reglas: cuándo espera, cuándo se cumple cada
 //! paso y dónde está el monte. Las líneas y las indicaciones de escena
@@ -13,9 +16,12 @@
 //! ([`stage_cues`]) y mueve a Bairoletto por su camino ([`run_scripted`]).
 
 use bevy::prelude::*;
-use pampa_core::{AnimationState, Cue, ErrandStage, Heading, MAX_STEP, Npc, Standing, Vec2};
+use pampa_core::{
+    AnimationState, Beat, Cue, Errand, ErrandStage, Heading, MAX_STEP, Npc, Standing, Vec2,
+};
 use pampa_render::{
-    CharacterVisual, FigureKind, Pillion, VisualPose, WorldClock, WorldTowns, world_from_ground,
+    CharacterVisual, Fallen, FigureKind, Pillion, VisualPose, WorldClock, WorldTowns,
+    world_from_ground,
 };
 
 use pampa_render::character::Fading;
@@ -125,6 +131,91 @@ pub(crate) fn wait_at_door(
     }
 }
 
+/// Pone a Farach donde está según el encargo
+/// ([`pampa_core::Errand::farach`]): en la puerta de su comisaría, o la noche
+/// del acto 6 adentro de La Colonia, parado en el mostrador. Cuando se oye el
+/// disparo de la escena de la puerta ([`pampa_core::Errand::shot_heard`]) cae
+/// ahí de espaldas ([`Fallen`]) y queda tendido; si aparece ya tendido (su
+/// pueblo se volvió a cargar), no se lo ve caer. Terminado el acto ya no está.
+/// La huella de su cuerpo en la puerta (la agrega el plan del encargo) choca
+/// solo mientras está ahí: `away` dice si ya se quitó. El disparo suena una
+/// vez, desde donde estaba él ([`crate::chase::Gunshot`], sin los gritos de la
+/// persecución).
+pub(crate) fn place_farach(
+    mut commands: Commands,
+    (errand, clock): (Option<ResMut<ErrandRun>>, Option<Res<WorldClock>>),
+    (conversation, mut shots): (Res<Conversation>, MessageWriter<crate::chase::Gunshot>),
+    (mut world, towns, mut away): (ResMut<GameWorld>, Option<Res<WorldTowns>>, Local<bool>),
+    mut npcs: Query<(
+        Entity,
+        &StandingNpc,
+        &mut Transform,
+        &mut VisualPose,
+        Has<Fallen>,
+    )>,
+) {
+    let Some(mut errand) = errand else {
+        return;
+    };
+    let time = clock.map_or(0.0, |c| c.0.hour());
+    let standing = errand.0.farach(time).filter(|w| !w.fallen);
+    if let Some(talk) = conversation.0.as_ref()
+        && let Some(standing) = standing
+        && talk.partner == Some(Npc::Bairoletto)
+        && errand.0.stage() == ErrandStage::Hideout
+        && Errand::shot_heard(&talk.beats, talk.next)
+    {
+        errand.0.shoot_farach();
+        shots.write(crate::chase::Gunshot {
+            from: standing.at.position,
+            bairoletto: false,
+        });
+    }
+    let place = errand.0.farach(time);
+    let door = errand.0.standing(Npc::Farach);
+    let gone = place.is_none_or(|p| p.at != door);
+    if gone != *away {
+        if gone {
+            world.0.obstacles.remove(&door.footprint());
+        } else {
+            world.0.obstacles.push(door.footprint());
+        }
+        *away = gone;
+    }
+    for (entity, npc, mut transform, mut pose, fallen) in &mut npcs {
+        if npc.npc != Npc::Farach {
+            continue;
+        }
+        let Some(place) = place else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+        let at = place.at.position;
+        let here = Vec2::new(transform.translation.x, -transform.translation.z);
+        let moved = here.distance(at) > 0.01;
+        if moved {
+            // Adentro pisa el piso de ladrillo de la pulpería.
+            let floor = towns
+                .as_ref()
+                .and_then(|t| t.0.get(place.at.town)?.pulperia())
+                .filter(|(_, inside)| inside.floor.contains_point(at))
+                .map(|(store, _)| pulperia_floor(store, &world));
+            let ground = floor.unwrap_or_else(|| world.0.ground_height(at));
+            transform.translation = world_from_ground(at, ground);
+            pose.heading = place.at.heading;
+        }
+        if place.fallen && !fallen {
+            // Solo se lo ve caer donde estaba parado.
+            let since = if moved {
+                Fallen::LONG_AGO
+            } else {
+                Fallen::default()
+            };
+            commands.entity(entity).insert(since);
+        }
+    }
+}
+
 /// Los pasos del acto 6 que empiezan solos, al llegar: de noche, a caballo,
 /// hasta Bairoletto en la puerta ([`pampa_core::Errand::rendezvous`]); y la
 /// huida, en cuanto la milicada lo perdió en el campo
@@ -184,6 +275,69 @@ pub(crate) fn set_off(
         progress.write(ErrandProgress(event));
         conversation.0 = Some(Talk::scene(Npc::Bairoletto, errand.0.last_scene()));
     }
+}
+
+/// El cartel cuando la milicada atrapa al jugador (S4).
+pub const CAUGHT: &str = "Te agarraron";
+
+/// A cuántos metros de la vereda de La Colonia vuelve el jugador cuando lo
+/// atrapan: el costado izquierdo del caballo queda frente a la puerta.
+pub const BACK_AT_DOOR: f32 = 3.5;
+
+/// Hace avanzar el cartel de "Te agarraron" ([`CAUGHT`], lo inicia
+/// [`crate::chase::ride_after`]) y, con la pantalla en negro, vuelve el acto
+/// al momento en que Bairoletto sale corriendo de la pulpería: la milicada
+/// vuelve adentro con sus caballos atados, Bairoletto baja del anca, el
+/// jugador queda montado y quieto frente a la puerta, y la escena sigue desde
+/// [`Cue::RunToHorse`]. El paso de la historia no cambia (sigue la huida).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn back_to_the_door(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut card: ResMut<pampa_render::TitleCard>,
+    (errand, world): (Option<Res<ErrandRun>>, Res<GameWorld>),
+    (mut conversation, mut subtitle): (ResMut<Conversation>, ResMut<pampa_render::Subtitle>),
+    (mut sallied, mut gun, mut yelled): (
+        ResMut<crate::chase::Sallied>,
+        ResMut<crate::chase::Gun>,
+        ResMut<crate::chase::Yelled>,
+    ),
+    mut players: Query<(Entity, &mut Player, &mut Transform)>,
+    milicos: Query<Entity, With<crate::chase::Milico>>,
+) {
+    if card.text() != Some(CAUGHT) || !card.tick(time.delta_secs()) {
+        return;
+    }
+    let (Some(errand), Ok((me, mut player, mut transform))) = (errand, players.single_mut()) else {
+        return;
+    };
+    let Some(porch) = errand.0.porch() else {
+        return;
+    };
+    for milico in &milicos {
+        commands.entity(milico).despawn();
+    }
+    commands
+        .entity(me)
+        .remove::<(Pillion, crate::chase::Aim, pampa_render::Shooting)>();
+    *sallied = crate::chase::Sallied(false);
+    *gun = crate::chase::Gun::default();
+    *yelled = crate::chase::Yelled(0);
+    let out = porch.heading.forward();
+    player.rider.heading = Heading::from_radians(out.x.atan2(-out.y));
+    crate::console::teleport(
+        &mut player.rider,
+        &mut transform,
+        porch.position + out * BACK_AT_DOOR,
+        &world.0,
+    );
+    let scene = errand.0.last_scene();
+    let run = scene
+        .iter()
+        .position(|b| *b == Beat::Cue(Cue::RunToHorse))
+        .unwrap_or(scene.len());
+    conversation.0 = Some(Talk::scene(Npc::Bairoletto, &scene[run..]));
+    subtitle.0 = None;
 }
 
 /// El lugar junto al costado izquierdo del caballo del jugador, mirándolo,

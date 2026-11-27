@@ -45,6 +45,7 @@ pub mod streaming;
 pub mod street;
 pub mod subtitle;
 pub mod terrain;
+pub mod title_card;
 pub mod town;
 pub mod train;
 pub mod tree;
@@ -54,9 +55,9 @@ pub mod vehicle;
 pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
-    CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, EYE_IN_HEAD, FigureKind,
-    Gaze, MILICO_LOOKS, OWN_HEAD_LAYER, Pillion, Shooting, TOWNSFOLK_LOOKS, Talking, ViewerBody,
-    ViewerHead, VisualPose,
+    CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, EYE_IN_HEAD, Fallen,
+    FigureKind, Gaze, MILICO_LOOKS, OWN_HEAD_LAYER, Pillion, Shooting, TOWNSFOLK_LOOKS, Talking,
+    ViewerBody, ViewerHead, VisualPose,
 };
 pub use coords::world_from_ground;
 pub use dust::DustPlugin;
@@ -89,6 +90,7 @@ pub use sky::SkyPlugin;
 pub use stall::{CheeseStall, StallPlugin};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
+pub use title_card::{TitleCard, TitleCardPlugin};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
 pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrains, car_transform};
 pub use tree::{Species, TreeKit, TreePlugin};

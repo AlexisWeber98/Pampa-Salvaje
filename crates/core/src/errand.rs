@@ -15,7 +15,7 @@
 
 use crate::pulperia::Door;
 use crate::pulperia::FurnitureKind;
-use crate::story::{Beat, Goal, Step};
+use crate::story::{Beat, Cue, Goal, Step};
 use crate::{Aabb, Heading, Side, TetheredHorse, TownLayout, Travel, Vec2};
 
 /// Quién participa en el encargo.
@@ -136,6 +136,13 @@ impl From<Option<Goal>> for ErrandStage {
     }
 }
 
+/// Dónde está alguien del encargo, y si cayó al piso (ver [`Errand::farach`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Whereabouts {
+    pub at: Standing,
+    pub fallen: bool,
+}
+
 /// Algo que hizo avanzar el encargo: se cumplió el objetivo de un paso.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrandEvent {
@@ -198,6 +205,12 @@ pub struct Errand {
     /// la vereda de [`Self::porch`] de noche, junto al caballo donde perdieron
     /// a la milicada. Manda sobre su asiento.
     bairoletto_moved: Option<Standing>,
+    /// Dónde está Farach la noche del acto 6: en el mostrador de esa
+    /// pulpería, del lado de los clientes
+    /// ([`crate::pulperia::Interior::at_counter`]); `None` sin pulpería.
+    farach_counter: Option<Standing>,
+    /// Si ya se oyó el disparo que lo deja tendido ([`Self::shoot_farach`]).
+    farach_shot: bool,
     /// Pueblo del caballo, y el caballo.
     horse: (usize, TetheredHorse),
     /// Nombre del pueblo en el que está Farach.
@@ -300,6 +313,14 @@ impl Errand {
             .pulperia()
             .map_or(door, |(_, inside)| inside.door.center);
         let (stall, amadeo) = cheese_stall(away, police, from)?;
+        let farach_counter = away
+            .pulperia()
+            .and_then(|(_, inside)| inside.at_counter())
+            .map(|(position, heading)| Standing {
+                town: police,
+                position,
+                heading,
+            });
         let (bairoletto, bairoletto_seat, bairoletto_room, bairoletto_entry) = match away.pulperia()
         {
             Some((_, inside)) => {
@@ -344,6 +365,8 @@ impl Errand {
             bairoletto_room,
             bairoletto_entry,
             bairoletto_moved: None,
+            farach_counter,
+            farach_shot: false,
             horse: (giver, home.hitching_post.horse),
             police_name: away.name.clone(),
             stall,
@@ -377,6 +400,42 @@ impl Errand {
     /// 4, aunque el paso pendiente ya sea el encuentro de la noche).
     pub fn place(&mut self, at: Standing) {
         self.bairoletto_moved = Some(at);
+    }
+
+    /// Se oyó el disparo de la escena del acto 6: Farach cae tendido donde
+    /// estaba, en el mostrador de La Colonia ([`Self::farach`]).
+    pub fn shoot_farach(&mut self) {
+        self.farach_shot = true;
+    }
+
+    /// Si en la escena de la puerta del acto 6, `scene`, jugada hasta antes
+    /// del momento `played`, ya se oyó el disparo: su primer subtítulo
+    /// ([`Cue::Caption`]), después de que Bairoletto entra a la pulpería.
+    pub fn shot_heard(scene: &[Beat], played: usize) -> bool {
+        scene
+            .iter()
+            .position(|b| matches!(b, Beat::Cue(Cue::Caption(_))))
+            .is_some_and(|i| i < played)
+    }
+
+    /// Dónde está Farach a la hora `time` (del día, en horas), y si está
+    /// tendido. Parado en la puerta de su comisaría ([`Self::standing`]),
+    /// salvo en el acto 6: de noche mientras Bairoletto espera
+    /// ([`Self::waits_at_door`]) y durante la escena de la puerta está parado
+    /// en el mostrador de La Colonia; desde el disparo
+    /// ([`Self::shoot_farach`]) está tendido ahí, toda la huida. Terminada la
+    /// historia después del disparo ya no está en ninguna parte: `None`.
+    pub fn farach(&self, time: f32) -> Option<Whereabouts> {
+        let inside = self.waits_at_door(time) || self.stage() == ErrandStage::Hideout;
+        match (self.farach_counter, self.farach_shot) {
+            (Some(_), true) if self.stage() == ErrandStage::Done => None,
+            (Some(at), true) => Some(Whereabouts { at, fallen: true }),
+            (Some(at), false) if inside => Some(Whereabouts { at, fallen: false }),
+            _ => Some(Whereabouts {
+                at: self.farach,
+                fallen: false,
+            }),
+        }
     }
 
     /// La puerta de la pulpería de Bairoletto; `None` si ese pueblo no tiene.
@@ -1373,6 +1432,63 @@ mod tests {
         let field = east(door, 1000.0);
         assert!(e.shake_off(field, town, true).is_some());
         assert!(e.hail(near, Travel::Riding).is_some());
+    }
+
+    #[test]
+    fn farach_keeps_his_door_until_the_night_of_act_six_then_falls_shot_in_la_colonia_for_good() {
+        let (towns, e) = errand();
+        let (_, inside) = towns[1].pulperia().unwrap();
+        let (spot, facing) = inside.at_counter().unwrap();
+        let door = e.standing(Npc::Farach);
+        let counter = Standing {
+            town: 1,
+            position: spot,
+            heading: facing,
+        };
+        let up = |at| Some(Whereabouts { at, fallen: false });
+        let down = Some(Whereabouts {
+            at: counter,
+            fallen: true,
+        });
+        // Antes del acto 6, de día y de noche, en la puerta de su comisaría.
+        assert_eq!((e.farach(15.0), e.farach(21.0)), (up(door), up(door)));
+        let mut e = escape(e);
+        // La noche del acto 6, parado en el mostrador de La Colonia; de día
+        // sigue en su puerta.
+        assert_eq!((e.farach(15.0), e.farach(21.0)), (up(door), up(counter)));
+        let porch = e.porch().unwrap().position;
+        assert!(e.rendezvous(porch, Travel::Riding, 21.0).is_some());
+        assert_eq!(e.farach(21.0), up(counter));
+        // Desde el disparo, tendido ahí, aunque amanezca durante la huida.
+        e.shoot_farach();
+        assert_eq!((e.farach(21.0), e.farach(7.0)), (down, down));
+        // Terminado el acto ya no está en ninguna parte (herido), tampoco en
+        // su puerta.
+        let town = Aabb::from_center_size(porch, Vec2::new(400.0, 400.0));
+        assert!(e.shake_off(east(porch, 1000.0), town, true).is_some());
+        assert_eq!(e.stage(), ErrandStage::Done);
+        assert_eq!((e.farach(23.0), e.farach(12.0)), (None, None));
+    }
+
+    #[test]
+    fn the_shot_is_heard_with_the_first_caption_of_the_door_scene() {
+        let caption = |t: &str| Beat::Cue(Cue::Caption(t.into()));
+        let door = [
+            Beat::Line {
+                speaker: crate::story::Speaker::Npc(Npc::Bairoletto),
+                text: "Esperame dos minutos".into(),
+            },
+            Beat::Cue(Cue::Enter),
+            Beat::Cue(Cue::Pause(4)),
+            caption("[Un disparo]"),
+            caption("[Gritos y tumulto]"),
+            Beat::Cue(Cue::RunToHorse),
+        ];
+        // Jugados hasta la pausa, no; desde el primer subtítulo, sí.
+        assert!(!Errand::shot_heard(&door, 3));
+        assert!(Errand::shot_heard(&door, 4) && Errand::shot_heard(&door, 6));
+        // Lo que se repite al atraparlo, desde que sale corriendo, no dispara.
+        assert!(!Errand::shot_heard(&door[5..], 1));
     }
 
     #[test]

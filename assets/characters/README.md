@@ -11,6 +11,7 @@ Se mueven con clips de animación, todos en un único archivo compartido, `anima
 - la caminata es la caminata de juego del paquete, que la herramienta endereza hasta convertirla en una caminata de calle tranquila y erguida (rodillas más rectas, el torso arriba, los hombros abajo, los brazos balanceándose a los costados), con un tranco más largo;
 - Farach espera con los brazos cruzados, y quien habla lo hace con las manos;
 - en la pulpería, sentados, los parroquianos juegan al truco o conversan con las manos adelante (`sit_talk`), toman llevándose el vaso a la boca (`sit_drink`) o fuman con los dedos cruzando la boca (`sit_smoke`), con el vaso, el cigarrillo humeante o los naipes en la mano (`crates/render/src/character/pastime.rs`);
+- quien cae al piso (`Fallen`: Farach, baleado en La Colonia en el acto 6) cae de espaldas una sola vez (`death`, el Death01 del paquete) y queda tendido en la última pose, sin volver a la espera ni mirar alrededor; si su modelo empieza a reproducir después, retoma la caída donde va, o ya tendido;
 - cada persona empieza sus clips en su propio punto;
 - la cabeza mira alrededor por encima del clip;
 - un jinete reproduce solo el clip sentado: un clip con peso cero igual fija los huesos que solo él anima.
