@@ -134,4 +134,11 @@
         Say(Amadeo, "y si le gusta vuelva cuando quiera que aquí voy a estar."),
         Say(Lisandro, "Le agradezco mucho señor."),
     ],
+    // Acto 6, no está en `historia`: si el jugador llega a pie a la puerta de
+    // La Colonia, de noche, Bairoletto le pide que traiga el caballo. Se dice
+    // cada vez que llega a pie.
+    bring_the_horse: [
+        Say(Bairoletto, "¿Y el caballo, pibe? A pata no vamos a ningún lado."),
+        Say(Bairoletto, "Andá a buscarlo y traelo, que acá te espero."),
+    ],
 )

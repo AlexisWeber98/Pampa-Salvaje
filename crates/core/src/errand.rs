@@ -405,6 +405,34 @@ impl Errand {
         self.bairoletto_entry.map(|(door, _)| door)
     }
 
+    /// Dónde están atados, de noche, los caballos de la milicada que está
+    /// adentro de La Colonia en el acto 6: hasta `count` lugares frente a la
+    /// pulpería, a [`Self::TIE_OUT`] de la fachada y a los costados de la
+    /// puerta donde haya lugar (sin tapar la entrada), mirando hacia ella y
+    /// libre de los obstáculos de `world`; los más cercanos a la puerta
+    /// primero. Vacío si ese pueblo no tiene pulpería.
+    pub fn milicada_horses(&self, world: &crate::World, count: usize) -> Vec<(Vec2, Heading)> {
+        let Some(door) = self.pulperia_door() else {
+            return Vec::new();
+        };
+        let along = Vec2::new(-door.outward.y, door.outward.x);
+        let facing = Heading::from_radians((-door.outward.y).atan2(-door.outward.x));
+        let half = Vec2::new(Self::TIE_ROOM, Self::TIE_ROOM) * 0.5;
+        (0..16)
+            .flat_map(|k| {
+                let d = Self::TIE_CLEAR + Self::TIE_SPACING * k as f32;
+                [d, -d]
+            })
+            .map(|lateral| door.center + door.outward * Self::TIE_OUT + along * lateral)
+            .filter(|&at| {
+                let room = Aabb::new(at - half, at + half);
+                world.obstacles.near(room).is_empty()
+            })
+            .take(count)
+            .map(|at| (at, facing))
+            .collect()
+    }
+
     /// Dónde espera Bairoletto de noche en el acto 6: parado en la vereda, a
     /// [`Self::DOORSTEP`] de la puerta de su pulpería, mirando a la calle.
     /// `None` si ese pueblo no tiene pulpería.
@@ -423,6 +451,17 @@ impl Errand {
         time >= Self::NIGHT_FROM || time < crate::pulperia::OPENS_AT
     }
 
+    /// A cuántos metros de la fachada de La Colonia se atan los caballos de
+    /// la milicada.
+    pub const TIE_OUT: f32 = 3.5;
+    /// Cuánto se apartan de la puerta, a cada lado, como mínimo, en metros:
+    /// la entrada queda libre.
+    pub const TIE_CLEAR: f32 = 2.5;
+    /// La separación entre dos caballos atados, en metros.
+    pub const TIE_SPACING: f32 = 1.8;
+    /// El lado del cuadrado que ocupa un caballo atado, en metros.
+    pub const TIE_ROOM: f32 = 2.6;
+
     /// Si Bairoletto espera en la puerta a la hora `time`: el paso pendiente
     /// es el encuentro del acto 6, es de noche y su pueblo tiene pulpería.
     pub fn waits_at_door(&self, time: f32) -> bool {
@@ -439,6 +478,18 @@ impl Errand {
             && travel == Travel::Riding
             && at.distance(porch.position) <= Self::MEET_RANGE;
         self.advance(Goal::Rendezvous, near, ErrandEvent::Rendezvous)
+    }
+
+    /// Si Bairoletto, esperando en la puerta ([`Self::waits_at_door`]), le
+    /// pide el caballo al jugador que llega a pie a menos de
+    /// [`Self::MEET_RANGE`] de él, a `at` y a la hora `time`.
+    pub fn asks_for_horse(&self, at: Vec2, travel: Travel, time: f32) -> bool {
+        self.stage() == ErrandStage::Rendezvous
+            && travel == Travel::OnFoot
+            && self.waits_at_door(time)
+            && self
+                .porch()
+                .is_some_and(|p| at.distance(p.position) <= Self::MEET_RANGE)
     }
 
     /// El jugador llega a `at`: si el paso pendiente es la huida y está a
@@ -1290,6 +1341,34 @@ mod tests {
         assert_eq!(e.rendezvous(far, Travel::Riding, 21.0), None);
         assert_eq!(e.interact(near), Interaction::Nothing);
         assert_eq!(e.stage(), ErrandStage::Rendezvous);
+        // A pie, de noche y cerca, le pide el caballo; a caballo, de día o
+        // lejos, no.
+        assert!(e.asks_for_horse(near, Travel::OnFoot, 21.0));
+        assert!(!e.asks_for_horse(near, Travel::Riding, 21.0));
+        assert!(!e.asks_for_horse(near, Travel::OnFoot, 15.0));
+        assert!(!e.asks_for_horse(far, Travel::OnFoot, 21.0));
+        // Los caballos de la milicada, atados frente a la pulpería, al costado
+        // de la puerta sin taparla, mirándola, sin pisar nada.
+        let world = World::with_town(Terrain::default(), &towns[1]);
+        let tied = e.milicada_horses(&world, 4);
+        assert_eq!(tied.len(), 4);
+        let along = Vec2::new(-door.outward.y, door.outward.x);
+        for (k, &(at, heading)) in tied.iter().enumerate() {
+            let from = at - door.center;
+            assert!((from.dot(door.outward) - Errand::TIE_OUT).abs() < 1e-3);
+            assert!(from.dot(along).abs() >= Errand::TIE_CLEAR - 1e-3, "{k}");
+            assert!(heading.forward().dot(door.outward) < -0.999);
+            let half = Vec2::new(Errand::TIE_ROOM, Errand::TIE_ROOM) * 0.5;
+            assert!(
+                world
+                    .obstacles
+                    .near(Aabb::new(at - half, at + half))
+                    .is_empty()
+            );
+            for &(other, _) in &tied[..k] {
+                assert!(other.distance(at) >= Errand::TIE_SPACING - 1e-3);
+            }
+        }
         // De noche, a caballo y cerca: empieza el acto, una sola vez.
         assert_eq!(
             e.rendezvous(near, Travel::Riding, 21.0),

@@ -253,6 +253,8 @@ impl Plugin for ErrandPlugin {
             .init_resource::<WalkPath>()
             .init_resource::<Approach>()
             .init_resource::<crate::pulperia::HeldOpen>()
+            .init_resource::<crate::chase::Gun>()
+            .init_resource::<crate::chase::Sallied>()
             .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
             .init_resource::<pampa_render::MapReach>()
@@ -275,6 +277,9 @@ impl Plugin for ErrandPlugin {
                     converse,
                     crate::escape::stage_cues,
                     crate::escape::run_scripted,
+                    crate::chase::tie_horses,
+                    crate::chase::sally,
+                    crate::chase::ride_after,
                     see_off,
                     frame_scene,
                     face_each_other,
@@ -1037,6 +1042,12 @@ mod tests {
         (e, Player { rider: p.rider })
     }
 
+    /// Cambia el jinete del jugador por `rider` (a pie o montado).
+    fn set_rider(app: &mut App, rider: Rider) {
+        let mut q = app.world_mut().query::<&mut Player>();
+        q.single_mut(app.world_mut()).unwrap().rider = rider;
+    }
+
     fn teleport(app: &mut App, to: GroundVec2) {
         let mut q = app.world_mut().query::<&mut Player>();
         let mut p = q.single_mut(app.world_mut()).unwrap();
@@ -1472,8 +1483,12 @@ mod tests {
     /// orden: sus líneas con el nombre de quien habla, y lo que se oye, sin
     /// nombre.
     fn scene_shown(step: usize) -> Vec<(String, String)> {
-        shipped_lines().steps[step]
-            .scene
+        beats_shown(&shipped_lines().steps[step].scene)
+    }
+
+    /// Lo que se ve de `beats`, como [`scene_shown`].
+    fn beats_shown(beats: &[Beat]) -> Vec<(String, String)> {
+        beats
             .iter()
             .filter_map(|beat| match beat {
                 Beat::Line { speaker, text } => Some((speaker.name().to_string(), text.clone())),
@@ -1531,6 +1546,8 @@ mod tests {
             app.update();
         }
         assert_eq!(tano_at_door(&mut app), None);
+        let mut q = app.world_mut().query::<&crate::chase::TiedHorse>();
+        assert_eq!(q.iter(app.world()).count(), 0, "no milico horses by day");
         assert_eq!(objective(&app), shipped_objective(4));
         assert_eq!(app.world().resource::<MapTarget>().0, Some(porch.position));
         // De noche espera parado en la vereda, frente a la puerta.
@@ -1540,6 +1557,37 @@ mod tests {
         }
         let at = tano_at_door(&mut app).expect("waits at the door at night");
         assert!(at.distance(porch.position) < 1e-3);
+        // Enfrente están atados los caballos de la milicada, que está adentro.
+        let tied = |app: &mut App| {
+            let mut q = app.world_mut().query::<&crate::chase::TiedHorse>();
+            q.iter(app.world()).map(|t| t.at).collect::<Vec<_>>()
+        };
+        let horses = tied(&mut app);
+        assert_eq!(horses.len(), crate::chase::MILICOS);
+        assert!(horses.iter().all(|h| h.distance(porch.position) < 15.0));
+
+        // A pie le pide que traiga el caballo, una sola vez, y el acto no
+        // empieza.
+        let riding = player(&mut app).1.rider;
+        let walker = Rider::on_foot(
+            porch.position + porch.heading.forward() * 3.0,
+            riding.heading,
+            &app.world().resource::<GameWorld>().0,
+        );
+        set_rider(&mut app, walker);
+        let before = said(&app).len();
+        app.update();
+        play_out(&mut app, 30.0, |_| {});
+        assert_eq!(
+            said(&app)[before..].to_vec(),
+            beats_shown(&shipped_lines().bring_the_horse)
+        );
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(said(&app).len(), before + 2, "asks only once");
+        assert_eq!(errand(&app).stage(), ErrandStage::Rendezvous);
+        set_rider(&mut app, riding);
 
         // Llegando a caballo hasta él empieza la escena, sin apretar nada.
         let before = said(&app).len();
@@ -1548,13 +1596,23 @@ mod tests {
         assert!(app.world().resource::<ControlLock>().0);
         let town = porch.town;
         let mut held = false;
+        let mut rides_talking = false;
         play_out(&mut app, 90.0, |app| {
             held |= app.world().resource::<crate::pulperia::HeldOpen>().0 == Some(town);
+            // Ya arriba, el jugador maneja mientras siguen hablando.
+            let mut q = app
+                .world_mut()
+                .query_filtered::<(), (With<Player>, With<pampa_render::Pillion>)>();
+            let up = q.iter(app.world()).count() == 1;
+            rides_talking |= up
+                && app.world().resource::<Conversation>().0.is_some()
+                && !app.world().resource::<ControlLock>().0;
         });
         // Habla, entra, se oye el disparo y el tumulto, sale y se sube en
         // ancas: todo tal como está en errand.ron, con la puerta abierta.
         assert_eq!(said(&app)[before..].to_vec(), scene_shown(4));
         assert!(held, "La Colonia stays open while he goes in and out");
+        assert!(rides_talking, "rides off while they talk");
         let me = player(&mut app).0;
         assert_eq!(
             app.world().get::<pampa_render::Pillion>(me),
@@ -1567,6 +1625,88 @@ mod tests {
         assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
         assert_eq!(objective(&app), shipped_objective(5));
         assert_eq!(app.world().resource::<MapTarget>().0, Some(monte));
+
+        // Mientras no arranca, la milicada sigue adentro.
+        let milicos = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query::<(&crate::chase::Milico, &CharacterVisual)>();
+            q.iter(app.world())
+                .map(|(m, v)| (m.rider.position, *v))
+                .collect::<Vec<_>>()
+        };
+        assert!(milicos(&mut app).is_empty());
+        assert_eq!(tied(&mut app).len(), crate::chase::MILICOS);
+        // Al arrancar salen corriendo de La Colonia, uno detrás del otro, cada
+        // uno hasta su caballo, montan, y Bairoletto les tira.
+        let mut going = player(&mut app).1.rider;
+        going.speed = crate::chase::SET_OFF + 1.0;
+        set_rider(&mut app, going);
+        app.update();
+        let mut q = app.world_mut().query::<&crate::escape::Scripted>();
+        let running: Vec<_> = q
+            .iter(app.world())
+            .filter(|s| matches!(s.then, crate::escape::Then::Saddle(_)))
+            .map(|s| s.way[0])
+            .collect();
+        assert_eq!(running.len(), crate::chase::MILICOS);
+        let door = errand(&app).pulperia_door().unwrap();
+        assert!(
+            running
+                .iter()
+                .all(|at| (*at - door.center).dot(door.outward) < 0.0)
+        );
+        for _ in 0..200 {
+            if milicos(&mut app).len() == crate::chase::MILICOS {
+                break;
+            }
+            app.update();
+        }
+        let up = milicos(&mut app);
+        assert_eq!(up.len(), crate::chase::MILICOS, "all four mount");
+        assert!(
+            tied(&mut app).is_empty(),
+            "their horses are gone from the post"
+        );
+        for (at, look) in &up {
+            assert!(
+                horses.iter().any(|h| h.distance(*at) < 3.0),
+                "on his own horse"
+            );
+            assert!(matches!(
+                look,
+                CharacterVisual::Mounted {
+                    rider: FigureKind::Milico(_),
+                    ..
+                }
+            ));
+        }
+        for _ in 0..40 {
+            app.update();
+        }
+        let gun = app.world().resource::<crate::chase::Gun>().0;
+        assert!(gun.rounds < pampa_core::Revolver::LOADED, "he shoots back");
+        let nearest = |app: &mut App| {
+            let me = player(app).1.rider.position;
+            milicos(app)
+                .iter()
+                .map(|(at, _)| at.distance(me))
+                .fold(f32::INFINITY, f32::min)
+        };
+        // Con la milicada detrás, en el monte Bairoletto no se baja, y se le
+        // vienen encima.
+        teleport(&mut app, monte + GroundVec2::new(10.0, 0.0));
+        let far = nearest(&mut app);
+        for _ in 0..200 {
+            app.update();
+        }
+        assert!(app.world().resource::<Conversation>().0.is_none());
+        assert_eq!(errand(&app).stage(), ErrandStage::Hideout);
+        assert!(nearest(&mut app) < far - 50.0, "they gallop after him");
+        // Sacándoles más de 600 m abandonan, y fuera de vista desaparecen.
+        teleport(&mut app, monte + porch.heading.forward() * 1000.0);
+        app.update();
+        assert!(milicos(&mut app).is_empty(), "lost them");
 
         // En el monte se baja, le paga $ 1 y se va hasta perderse.
         let paid = wallet(&app);
@@ -1594,6 +1734,14 @@ mod tests {
         }
         assert!(gone(&mut app), "he walks off and fades away");
         assert_eq!(tano_at_door(&mut app), None);
+        // Y la milicada abandona y vuelve a la comisaría hasta perderse.
+        for _ in 0..1200 {
+            if milicos(&mut app).is_empty() {
+                break;
+            }
+            app.update();
+        }
+        assert!(milicos(&mut app).is_empty(), "the milicada gives up");
     }
 
     /// El mundo incluido con el pueblo `town` activo y el resto no, como si el

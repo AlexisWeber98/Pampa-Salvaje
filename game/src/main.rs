@@ -11,6 +11,7 @@ mod sound;
 #[cfg(debug_assertions)]
 mod console;
 mod errand;
+mod chase;
 mod escape;
 mod fauna;
 mod first_person;

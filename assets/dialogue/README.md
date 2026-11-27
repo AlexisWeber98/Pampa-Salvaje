@@ -156,6 +156,10 @@ La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
   momento del juego, y no mueve la historia; Lisandro se le acerca solo antes
   de la primera línea. Sus líneas se validan como las de los pasos. Ningún paso
   puede pedir `Talk(Amadeo)`.
+- `bring_the_horse` lo dice Bairoletto cuando el jugador llega a pie (a menos
+  de 7 m) a la puerta de La Colonia mientras lo espera de noche: que traiga el
+  caballo. Se repite cada vez que el jugador vuelve a acercarse a pie. Puede
+  faltar (entonces no dice nada); sus líneas se validan como las de los pasos.
 - `not_your_horse` lo dice el jugador cuando intenta usar el caballo antes de
   que Don Hidalgo se lo preste (no detiene al jugador).
 - `police_town` es el pueblo de la comisaría, por su nombre en
@@ -176,7 +180,7 @@ los tests leen las líneas de este archivo y comprueban que el juego las muestre
 tal como están escritas. Lo que sí comprueban es la forma de la historia: el
 orden de los pasos, quién habla en cada escena y qué se da o se entrega (la
 carta, la plata, el queso). Si se cambia eso, hay que cambiar también el test
-`the_shipped_file_tells_acts_two_to_four_in_order_and_amadeo_apart` de
+`the_shipped_file_tells_acts_two_to_six_in_order_and_amadeo_apart` de
 `crates/content/src/errand.rs`.
 
 Los campos que el juego todavía no conoce (por ejemplo, un futuro grupo por

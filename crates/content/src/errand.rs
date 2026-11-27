@@ -40,6 +40,10 @@ pub struct ErrandLines {
     /// la primera vez que el jugador pasa por su puesto, fuera de la historia
     /// (ver `pampa_core::Errand::hail`). Vacía: no hay encuentro.
     pub amadeo: Vec<Beat>,
+    /// Lo que dice Bairoletto, esperando en la puerta de La Colonia, cuando el
+    /// jugador llega a pie (ver `pampa_core::Errand::asks_for_horse`): que
+    /// traiga el caballo. Vacío: no dice nada.
+    pub bring_the_horse: Vec<Beat>,
 }
 
 /// El pueblo de la comisaría del encargo cuando el archivo no nombra uno.
@@ -59,6 +63,8 @@ struct File {
     steps: Vec<StepFile>,
     #[serde(default)]
     amadeo: Vec<BeatFile>,
+    #[serde(default)]
+    bring_the_horse: Vec<BeatFile>,
 }
 
 #[derive(Deserialize)]
@@ -200,6 +206,7 @@ impl ErrandLines {
             police_town: file.police_town,
             steps: file.steps.into_iter().map(Step::from).collect(),
             amadeo: file.amadeo.into_iter().map(Beat::from).collect(),
+            bring_the_horse: file.bring_the_horse.into_iter().map(Beat::from).collect(),
         };
         lines.validate()?;
         Ok(lines)
@@ -311,6 +318,16 @@ impl ErrandLines {
                 ),
                 Beat::Act(Action::Receive(Item::Cheese)),
             ],
+            bring_the_horse: vec![
+                say(
+                    Npc::Bairoletto,
+                    "¿Y el caballo, pibe? A pata no vamos a ningún lado.",
+                ),
+                say(
+                    Npc::Bairoletto,
+                    "Andá a buscarlo y traelo, que acá te espero.",
+                ),
+            ],
         }
     }
 
@@ -361,7 +378,8 @@ impl ErrandLines {
             }
             check_scene(&format!("step {s}"), &step.scene)?;
         }
-        check_scene("amadeo", &self.amadeo)
+        check_scene("amadeo", &self.amadeo)?;
+        check_scene("bring_the_horse", &self.bring_the_horse)
     }
 
     /// Cada carácter distinto de cualquier texto que se muestra (líneas,
@@ -385,7 +403,11 @@ impl ErrandLines {
                 .into_iter()
                 .chain(step.scene.iter().filter_map(shown))
         });
-        let amadeo = self.amadeo.iter().filter_map(shown);
+        let amadeo = self
+            .amadeo
+            .iter()
+            .chain(&self.bring_the_horse)
+            .filter_map(shown);
         std::iter::once(self.police_town.as_str())
             .chain(self.not_your_horse.iter().map(String::as_str))
             .chain(steps)
@@ -561,6 +583,14 @@ mod tests {
         };
         assert_eq!(acts(&amadeo.scene), [Action::Receive(Item::Cheese)]);
         assert_eq!(speakers(&amadeo), ["Lisandro", "Viejo Amadeo"]);
+        // A pie en la puerta, Bairoletto pide el caballo.
+        let horse = Step {
+            goal: Goal::Rendezvous,
+            objective: None,
+            scene: lines.bring_the_horse.clone(),
+        };
+        assert!(!horse.scene.is_empty());
+        assert_eq!(speakers(&horse), ["Bairoletto"]);
         for line in lines.texts() {
             assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
         }

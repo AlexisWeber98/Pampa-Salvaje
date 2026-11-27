@@ -4,8 +4,9 @@
 //! a caballo empieza la escena ([`set_off`]). Bairoletto habla y entra; se oye
 //! el disparo y el tumulto; sale corriendo y se sube en ancas
 //! ([`pampa_render::Pillion`]). Después el jugador maneja hasta el monte más
-//! cercano ([`find_hideout`]). Ahí Bairoletto se baja, le paga y se va
-//! caminando hasta perderse.
+//! cercano ([`find_hideout`]), con la milicada detrás ([`crate::chase`]). Una
+//! vez que la perdió, en el monte Bairoletto se baja, le paga y se va caminando
+//! hasta perderse.
 //!
 //! `pampa-core` es dueño de las reglas: cuándo espera, cuándo se cumple cada
 //! paso y dónde está el monte. Las líneas y las indicaciones de escena
@@ -21,7 +22,7 @@ use pampa_render::{
 
 use pampa_render::character::Fading;
 
-use crate::errand::{Approach, Conversation, ErrandProgress, ErrandRun, Talk};
+use crate::errand::{Approach, Conversation, ErrandDialogue, ErrandProgress, ErrandRun, Talk};
 use crate::life::{FADE_SECONDS, LEAVING_PACE, Populated, StandingNpc, npc_figure, pulperia_floor};
 use crate::player::{GameWorld, Player};
 use crate::pulperia::HeldOpen;
@@ -56,13 +57,15 @@ pub const WALK_OFF: f32 = 12.0;
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Roaming;
 
-/// Qué pasa cuando Bairoletto termina su camino ([`Scripted`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Qué pasa cuando alguien termina su camino ([`Scripted`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Then {
     /// Se pierde de vista (adentro de la pulpería, o en el monte).
     Vanish,
     /// Se sube en ancas al caballo del jugador.
     Mount,
+    /// Un milico desata su caballo y monta ([`crate::chase::mount`]).
+    Saddle(crate::chase::Saddle),
 }
 
 /// Bairoletto recorriendo un camino de la escena, sin chocar con nada (su
@@ -168,12 +171,13 @@ pub(crate) fn wait_at_door(
 /// Bairoletto ya cuenta como parado junto al caballo, donde se va a bajar,
 /// para que la cámara lo encuadre mientras el caballo frena.
 pub(crate) fn set_off(
-    errand: Option<ResMut<ErrandRun>>,
+    (errand, dialogue): (Option<ResMut<ErrandRun>>, Option<Res<ErrandDialogue>>),
     clock: Option<Res<WorldClock>>,
     (mut conversation, approach): (ResMut<Conversation>, Res<Approach>),
     players: Query<&Player>,
     mut progress: MessageWriter<ErrandProgress>,
-    mut held: ResMut<HeldOpen>,
+    (mut held, mut asked): (ResMut<HeldOpen>, Local<bool>),
+    milicos: Query<&crate::chase::Milico>,
 ) {
     let (Some(mut errand), Ok(player)) = (errand, players.single()) else {
         return;
@@ -188,8 +192,20 @@ pub(crate) fn set_off(
     }
     let (at, travel) = (player.rider.position, player.rider.travel());
     let time = clock.map_or(0.0, |c| c.0.hour());
+    // A pie le pide el caballo, una vez cada vez que se le acerca.
+    let asking = errand.0.asks_for_horse(at, travel, time);
+    let lines = dialogue.as_ref().map(|d| &d.0.bring_the_horse);
+    if asking
+        && !*asked
+        && let Some(lines) = lines.filter(|l| !l.is_empty())
+    {
+        conversation.0 = Some(Talk::scene(Npc::Bairoletto, lines));
+    }
+    *asked = asking;
     let event = match errand.0.stage() {
         ErrandStage::Rendezvous => errand.0.rendezvous(at, travel, time),
+        // Con la milicada todavía detrás, Bairoletto no se baja.
+        ErrandStage::Hideout if milicos.iter().any(|m| !m.back) => None,
         ErrandStage::Hideout => {
             let event = errand.0.reach_hideout(at);
             if event.is_some() {
@@ -280,6 +296,7 @@ pub(crate) fn stage_cues(
             let Some(door) = door else {
                 commands.entity(me).insert(Pillion(FigureKind::Bairoletto));
                 talk.cue = None;
+                talk.partner = None;
                 return;
             };
             let start = door.center - door.outward * 2.0;
@@ -398,12 +415,17 @@ pub(crate) fn run_scripted(
         }
         if walk.next >= walk.way.len() {
             commands.entity(entity).despawn();
+            if let Then::Saddle(saddle) = walk.then {
+                crate::chase::mount(&mut commands, saddle, &world.0);
+            }
             if walk.then == Then::Mount {
                 if let Ok((me, _)) = players.single() {
                     commands.entity(me).insert(Pillion(FigureKind::Bairoletto));
                 }
+                // Arriba: el jugador ya maneja mientras siguen hablando.
                 if let Some(talk) = conversation.0.as_mut() {
                     talk.cue = None;
+                    talk.partner = None;
                 }
             }
             continue;

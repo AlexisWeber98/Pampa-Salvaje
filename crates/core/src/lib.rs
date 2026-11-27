@@ -33,6 +33,7 @@ pub mod money;
 pub mod obstacles;
 pub mod placement;
 pub mod places;
+pub mod pursuit;
 pub mod pose;
 pub mod pulperia;
 pub mod rail;
@@ -82,6 +83,10 @@ pub use placement::{PlacementError, place_towns};
 pub use places::{
     BANK_NAMES, NAMED_PULPERIAS, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
     TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays, pulperia_sign,
+};
+pub use pursuit::{
+    ALONGSIDE, CHASER_PACE, LOST_IN_MONTE, OUTRUN, Pursuit, Revolver, chaser_params, outrun, pursue,
+    rein_in,
 };
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{

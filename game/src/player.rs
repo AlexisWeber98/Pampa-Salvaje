@@ -373,7 +373,7 @@ pub(crate) fn drive_player(
 /// La velocidad de giro (rad/s, positiva hacia la izquierda) que convirtió
 /// `before` en `after` en `dt` segundos, por el camino más corto; ninguna si no
 /// pasó tiempo.
-fn yaw_rate(before: Heading, after: Heading, dt: f32) -> f32 {
+pub(crate) fn yaw_rate(before: Heading, after: Heading, dt: f32) -> f32 {
     if dt <= 0.0 {
         return 0.0;
     }
