@@ -138,14 +138,13 @@ pub(crate) fn wait_at_door(
 /// ahí de espaldas ([`Fallen`]) y queda tendido; si aparece ya tendido (su
 /// pueblo se volvió a cargar), no se lo ve caer. Terminado el acto ya no está.
 /// La huella de su cuerpo en la puerta (la agrega el plan del encargo) choca
-/// solo mientras está ahí: `away` dice si ya se quitó. El disparo suena una
-/// vez, desde donde estaba él ([`crate::chase::Gunshot`], sin los gritos de la
-/// persecución).
+/// solo mientras está ahí. El disparo suena una vez, desde donde estaba él
+/// ([`crate::chase::Gunshot`], sin los gritos de la persecución).
 pub(crate) fn place_farach(
     mut commands: Commands,
     (errand, clock): (Option<ResMut<ErrandRun>>, Option<Res<WorldClock>>),
     (conversation, mut shots): (Res<Conversation>, MessageWriter<crate::chase::Gunshot>),
-    (mut world, towns, mut away): (ResMut<GameWorld>, Option<Res<WorldTowns>>, Local<bool>),
+    (mut world, towns): (ResMut<GameWorld>, Option<Res<WorldTowns>>),
     mut npcs: Query<(
         Entity,
         &StandingNpc,
@@ -174,13 +173,14 @@ pub(crate) fn place_farach(
     let place = errand.0.farach(time);
     let door = errand.0.standing(Npc::Farach);
     let gone = place.is_none_or(|p| p.at != door);
-    if gone != *away {
-        if gone {
-            world.0.obstacles.remove(&door.footprint());
-        } else {
-            world.0.obstacles.push(door.footprint());
-        }
-        *away = gone;
+    // Se mira el mundo y no un recuerdo: uno vuelto a armar trae la huella
+    // del plan otra vez.
+    let footprint = door.footprint();
+    let there = world.0.obstacles.near(footprint).contains(&&footprint);
+    if gone && there {
+        world.0.obstacles.remove(&footprint);
+    } else if !gone && !there {
+        world.0.obstacles.push(footprint);
     }
     for (entity, npc, mut transform, mut pose, fallen) in &mut npcs {
         if npc.npc != Npc::Farach {
@@ -229,7 +229,11 @@ pub(crate) fn set_off(
     players: Query<&Player>,
     mut progress: MessageWriter<ErrandProgress>,
     (mut held, mut asked): (ResMut<HeldOpen>, Local<bool>),
-    (milicos, towns): (Query<&crate::chase::Milico>, Option<Res<WorldTowns>>),
+    (milicos, towns, sallied): (
+        Query<&crate::chase::Milico>,
+        Option<Res<WorldTowns>>,
+        Res<crate::chase::Sallied>,
+    ),
 ) {
     let (Some(mut errand), Ok(player)) = (errand, players.single()) else {
         return;
@@ -257,8 +261,9 @@ pub(crate) fn set_off(
     let event = match errand.0.stage() {
         ErrandStage::Rendezvous => errand.0.rendezvous(at, travel, time),
         ErrandStage::Hideout => {
-            // Perdida: ninguno la sigue (abandonan y se van).
-            let lost = milicos.iter().all(|m| m.back);
+            // Perdida: salió y ninguno la sigue (abandonan y se van). Sin
+            // salir no hay a quién perder.
+            let lost = sallied.0 && milicos.iter().all(|m| m.back);
             let town = errand.0.standing(Npc::Farach).town;
             let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town)) else {
                 return;
@@ -284,8 +289,9 @@ pub const CAUGHT: &str = "Te agarraron";
 /// atrapan: el costado izquierdo del caballo queda frente a la puerta.
 pub const BACK_AT_DOOR: f32 = 3.5;
 
-/// Hace avanzar el cartel de "Te agarraron" ([`CAUGHT`], lo inicia
-/// [`crate::chase::ride_after`]) y, con la pantalla en negro, vuelve el acto
+/// Hace avanzar el cartel en curso ([`pampa_render::TitleCard`]), sea cual sea
+/// su texto. Si es el de "Te agarraron" ([`CAUGHT`], lo inicia
+/// [`crate::chase::ride_after`]), con la pantalla en negro vuelve el acto
 /// al momento en que Bairoletto sale corriendo de la pulpería: la milicada
 /// vuelve adentro con sus caballos atados, Bairoletto baja del anca, el
 /// jugador queda montado y quieto frente a la puerta, y la escena sigue desde
@@ -305,24 +311,29 @@ pub(crate) fn back_to_the_door(
     mut players: Query<(Entity, &mut Player, &mut Transform)>,
     milicos: Query<Entity, With<crate::chase::Milico>>,
 ) {
-    if card.text() != Some(CAUGHT) || !card.tick(time.delta_secs()) {
+    // Todo cartel avanza, diga lo que diga; solo este rehace el acto.
+    let caught = card.text() == Some(CAUGHT);
+    if !card.tick(time.delta_secs()) || !caught {
         return;
     }
-    let (Some(errand), Ok((me, mut player, mut transform))) = (errand, players.single_mut()) else {
-        return;
-    };
-    let Some(porch) = errand.0.porch() else {
-        return;
-    };
+    // La milicada vuelve adentro aunque falte algo de lo que sigue: el negro
+    // llega una sola vez.
     for milico in &milicos {
         commands.entity(milico).despawn();
     }
-    commands
-        .entity(me)
-        .remove::<(Pillion, crate::chase::Aim, pampa_render::Shooting)>();
     *sallied = crate::chase::Sallied(false);
     *gun = crate::chase::Gun::default();
     *yelled = crate::chase::Yelled(0);
+    subtitle.0 = None;
+    let Ok((me, mut player, mut transform)) = players.single_mut() else {
+        return;
+    };
+    commands
+        .entity(me)
+        .remove::<(Pillion, crate::chase::Aim, pampa_render::Shooting)>();
+    let Some((errand, porch)) = errand.as_ref().and_then(|e| Some((e, e.0.porch()?))) else {
+        return;
+    };
     let out = porch.heading.forward();
     player.rider.heading = Heading::from_radians(out.x.atan2(-out.y));
     crate::console::teleport(
@@ -337,7 +348,6 @@ pub(crate) fn back_to_the_door(
         .position(|b| *b == Beat::Cue(Cue::RunToHorse))
         .unwrap_or(scene.len());
     conversation.0 = Some(Talk::scene(Npc::Bairoletto, &scene[run..]));
-    subtitle.0 = None;
 }
 
 /// El lugar junto al costado izquierdo del caballo del jugador, mirándolo,
