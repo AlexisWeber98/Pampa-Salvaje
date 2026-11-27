@@ -110,6 +110,7 @@ CLIPS = [
     ("sit_talk", "ual1", "Sitting_Talking_Loop", True, False),
     ("sit_drink", "ual1", "Sitting_Idle_Loop", True, False),
     ("sit_smoke", "ual1", "Sitting_Idle_Loop", True, False),
+    ("death", "ual1", "Death01", False, False),
 ]
 
 

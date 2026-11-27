@@ -33,6 +33,7 @@ pub mod money;
 pub mod obstacles;
 pub mod placement;
 pub mod places;
+pub mod pursuit;
 pub mod pose;
 pub mod pulperia;
 pub mod rail;
@@ -62,7 +63,7 @@ pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{
-    Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Stall, Standing,
+    Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Stall, Standing, Whereabouts,
 };
 pub use fauna::{
     Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,
@@ -83,6 +84,11 @@ pub use places::{
     BANK_NAMES, NAMED_PULPERIAS, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
     TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays, pulperia_sign,
 };
+pub use pursuit::{
+    ALONGSIDE, CHASER_PACE, COVER_PLANTS, COVER_RADIUS, LOST_IN_COVER, LOST_SIGHT_SECONDS, OUTRUN,
+    Pursuit, RIDER_EYE, ReturnFire, Revolver, SIGHT_CROWNS, chaser_params, in_cover, in_sight,
+    outrun, pursue, rein_in,
+};
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{
     LinePath, RailBay, RailBranch, RailCurve, RailLine, RailLineError, RailLink, RailSpan,
@@ -101,7 +107,7 @@ pub use settlement::{
     HouseStyle, KeepOut, RoadsideWreck, Settlement, SettlementKind, SettlementLayout, Structure,
     StructureKind, Track,
 };
-pub use story::{Action, Beat, Goal, Speaker, Step};
+pub use story::{Action, Beat, Cue, Goal, Speaker, Step};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
     Building, BuildingKind, Canopy, Floor, HitchingPost, PLAZA_MONUMENT, PLAZA_PATH_CLEARANCE,

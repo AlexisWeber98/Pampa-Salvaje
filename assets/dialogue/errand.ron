@@ -1,4 +1,4 @@
-// La historia del capítulo 1, paso a paso (actos 2 a 5 de `historia`): Don
+// La historia del capítulo 1, paso a paso (actos 2 a 6 de `historia`): Don
 // Hidalgo, en la plaza de Monte Nievas, manda al jugador a ver al comisario
 // Elías Farach en la comisaría de Castex. Ver README.md en esta carpeta para
 // las reglas (pasos, escenas, caracteres, longitud).
@@ -75,6 +75,45 @@
                 Say(Bairoletto, "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."),
             ],
         ),
+        // Acto 6, palabra por palabra: "En la noche. En la pulpería “La
+        // colonia” Bairoletto te espera afuera en la puerta." Desde las 20,
+        // parado en la vereda frente a la puerta; empieza solo cuando el
+        // jugador llega a caballo hasta él (a pie no: necesita el caballo).
+        // "Procede a entrar y luego de unos segundos se escucha un disparo,
+        // gritos y tumulto. Bairoletto sale corriendo y se sube a tu caballo."
+        // El disparo y el tumulto, por ahora, como subtítulos sin nombre.
+        (
+            goal: Rendezvous,
+            objective: "Volvé de noche a La Colonia, a caballo",
+            scene: [
+                Say(Bairoletto, "Bien pibe, ¡viniste! Esperame dos minutos que compro algo adentro y ya nos vamos."),
+                Enter,
+                Pause(4),
+                Caption("[Un disparo]"),
+                Caption("[Gritos y tumulto]"),
+                RunToHorse,
+                Say(Bairoletto, "¡Dale pibe arrancá pal monte que nos sigue la milicada!"),
+                Say(Lisandro, "¡¿Pero qué hiciste?!"),
+                Say(Bairoletto, "¡Le hice un agujero en el cuello al canalla del comisario! ¡jaja!"),
+            ],
+        ),
+        // "Al llegar al monte. Bairoletto se baja del caballo." Donde sea que
+        // pierdan a la milicada, en cualquier parte del campo fuera del pueblo
+        // (usuario, 2026-11-27). Paga $ 1
+        // (usuario, 2026-11-12; `historia` dice $ 1,50). La línea larga va
+        // cortada en dos en la coma, sin cambiar ninguna palabra.
+        (
+            goal: Hideout,
+            objective: "Perdé a la milicada en el campo",
+            scene: [
+                GetOff,
+                Say(Bairoletto, "Buen trabajo Pibe, como te lo prometí, acá tenes tu pago."),
+                Earn(pesos: 1),
+                Say(Bairoletto, "Si necesitas Laburo buscame en el rancho “La Esmeralda” fuera de Castex,"),
+                Say(Bairoletto, "que tengo más trabajos para vos."),
+                Leave,
+            ],
+        ),
         // Los actos siguientes se agregan aquí como pasos nuevos.
     ],
     // Acto 5, palabra por palabra: "Al hacer una cuadra, un puestero, viejo,
@@ -95,5 +134,18 @@
         Receive(Cheese),
         Say(Amadeo, "y si le gusta vuelva cuando quiera que aquí voy a estar."),
         Say(Lisandro, "Le agradezco mucho señor."),
+    ],
+    // Acto 6, no está en `historia`: si el jugador llega a pie a la puerta de
+    // La Colonia, de noche, Bairoletto le pide que traiga el caballo. Se dice
+    // cada vez que llega a pie.
+    bring_the_horse: [
+        Say(Bairoletto, "¿Y el caballo, pibe? A pata no vamos a ningún lado."),
+        Say(Bairoletto, "Andá a buscarlo y traelo, que acá te espero."),
+    ],
+    // Acto 6, palabra por palabra: "(Persecución, Bairoletto dispara y grita
+    // como un loco.)" / "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!".
+    // En ancas, grita una línea por tiro, en orden, cada una una sola vez.
+    chase_yells: [
+        Say(Bairoletto, "Ahí tenes Farach, ¡Secuestrame ahora sinvergüenza!"),
     ],
 )

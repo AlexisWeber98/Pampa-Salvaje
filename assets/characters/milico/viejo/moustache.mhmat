@@ -1,0 +1,11 @@
+# The old milico's drooping moustache: the viking moustache's strands as
+# grey (see greyscaleTexture in tools/README.md), tinted grey with a little
+# of the dark left.
+name milico_viejo_moustache
+diffuseColor 0.50 0.48 0.45
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/clothes/rehmanpolanski_moustache_viking/MoustacheViking.png

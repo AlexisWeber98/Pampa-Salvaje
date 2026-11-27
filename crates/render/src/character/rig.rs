@@ -108,6 +108,27 @@ pub fn played(seated: Option<Clip>) -> &'static [Clip] {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Talking;
 
+/// Marca a una persona que cayó al piso: parada, cae de espaldas una sola vez
+/// ([`Clip::Death`]) y queda tendida en la última pose, sin volver a la espera
+/// ni mirar alrededor. El juego se lo pone a la persona; el número son los
+/// segundos desde que cayó (los cuenta [`count_fallen`]), para que un modelo
+/// que empieza a reproducir después (creado de nuevo, o visto por primera vez)
+/// retome la caída donde va, o ya tendido.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct Fallen(pub f32);
+
+impl Fallen {
+    /// Quien cayó hace rato: empieza tendido.
+    pub const LONG_AGO: Self = Self(f32::INFINITY);
+}
+
+/// Cuenta los segundos desde que cayó cada persona ([`Fallen`]).
+pub(super) fn count_fallen(time: Res<Time>, mut fallen: Query<&mut Fallen>) {
+    for mut f in &mut fallen {
+        f.0 += time.delta_secs();
+    }
+}
+
 /// Hacia dónde gira la cabeza una persona, en radianes respecto del frente de
 /// su cuerpo (positivo hacia la izquierda), en lugar de mirar a su alrededor:
 /// el juego se lo pone a quien mira a alguien (una persona sentada que mira a
@@ -340,7 +361,7 @@ pub(super) fn drive_rigs(
     loaded: Option<Res<Assets<AnimationClip>>>,
     cameras: Query<(Entity, &GlobalTransform, &Camera), With<Camera3d>>,
     bodies: Query<(&FigureBody, &Transform, &ChildOf), Without<Rig>>,
-    people: Query<(&VisualPose, Has<Talking>)>,
+    people: Query<(&VisualPose, Has<Talking>, Option<&Fallen>)>,
     mut rigs: Query<ModelRig>,
     mut players: Query<&mut AnimationPlayer>,
     seen: Query<&ViewVisibility>,
@@ -351,6 +372,7 @@ pub(super) fn drive_rigs(
     for (child_of, mut rig, at, mut transform, riding, bench, behind) in &mut rigs {
         let on_bench = bench.is_some();
         let seated = seated_clip(riding.is_some(), bench, behind);
+        let mut fallen = None;
         let figure = bodies
             .get(child_of.parent())
             .ok()
@@ -360,9 +382,13 @@ pub(super) fn drive_rigs(
                 transform.set_if_neq(
                     model_transform().with_translation(Vec3::Y * -carried.translation.y),
                 );
-                let (speed, talking) = people
-                    .get(person.parent())
-                    .map_or((0.0, false), |(pose, talking)| (moving(pose), talking));
+                let (speed, talking) = match people.get(person.parent()) {
+                    Ok((pose, talking, down)) => {
+                        fallen = down.map(|f| f.0);
+                        (moving(pose), talking)
+                    }
+                    Err(_) => (0.0, false),
+                };
                 (body, speed, talking)
             });
         let Some((kind, seed, speed, mut goal)) = who(riding, seated, figure) else {
@@ -375,6 +401,10 @@ pub(super) fn drive_rigs(
         };
         if on_bench {
             goal = rising_targets(seated.unwrap_or(AT_REST), rise);
+        }
+        // Quien cayó solo reproduce la caída.
+        if fallen.is_some() {
+            goal = seated_targets(Clip::Death);
         }
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
         // La visibilidad solo se conoce con una cámara dibujando. Un jinete
@@ -429,6 +459,24 @@ pub(super) fn drive_rigs(
             rig.weights = goal;
             rig.started = true;
         }
+        let death = clips.node(Clip::Death);
+        if let Some(since) = fallen
+            && player.animation(death).is_none()
+        {
+            let Some(duration) = loaded
+                .as_deref()
+                .and_then(|l| l.get(&clips.clips[Clip::Death.index()]))
+                .map(AnimationClip::duration)
+            else {
+                continue;
+            };
+            // Una sola vez: terminada, queda en su última pose.
+            player.play(death).seek_to(since.min(duration));
+            // Quien ya está tendido no se ve caer desde la espera.
+            if since >= duration {
+                rig.weights = goal;
+            }
+        }
         if on_bench {
             rig.weights = goal;
         } else {
@@ -445,6 +493,9 @@ pub(super) fn drive_rigs(
                     .set_speed(stride_rate(clip, speed / stride));
             }
         }
+        if let Some(active) = player.animation_mut(death) {
+            active.set_weight(rig.weights[Clip::Death.index()]);
+        }
     }
 }
 
@@ -453,7 +504,8 @@ pub(super) fn drive_rigs(
 /// su pelvis la pone [`pose_riders`](super::rider::pose_riders).
 pub(super) fn fit_rigs(
     clips: Option<Res<CharacterClips>>,
-    bodies: Query<&FigureBody>,
+    bodies: Query<(&FigureBody, &ChildOf)>,
+    fallen: Query<(), With<Fallen>>,
     rigs: Query<(&ChildOf, &Rig), Without<Riding>>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -467,12 +519,18 @@ pub(super) fn fit_rigs(
         {
             t.translation = fit_pelvis(t.translation, reference, rest, leg);
         }
-        let Ok(body) = bodies.get(child_of.parent()) else {
+        let Ok((body, person)) = bodies.get(child_of.parent()) else {
             continue;
+        };
+        // Tendido, no mira alrededor.
+        let glance = if fallen.contains(person.parent()) {
+            0.0
+        } else {
+            body.glance
         };
         for (entity, frame) in rig.look.into_iter().flatten() {
             if let Ok(mut t) = transforms.get_mut(entity) {
-                t.rotation = glance_turn(t.rotation, frame, body.glance / 2.0);
+                t.rotation = glance_turn(t.rotation, frame, glance / 2.0);
             }
         }
         for ((entity, frame), out) in rig
@@ -1009,6 +1067,9 @@ mod tests {
             FigureKind::Protagonist,
             FigureKind::Hidalgo,
             FigureKind::Farach,
+            FigureKind::Milico(0),
+            FigureKind::Milico(1),
+            FigureKind::Milico(2),
         ];
         let (mut app, rigs) = playing(&people, AnimationState::Idle, 0.0);
         let mut lowest = Vec::new();
@@ -1125,6 +1186,48 @@ mod tests {
             app.update();
         }
         assert!(weight(&app, Clip::Idle) > 0.99 && weight(&app, Clip::IdleTalk) < 0.01);
+    }
+
+    #[test]
+    fn whoever_falls_drops_to_the_floor_once_and_stays_down_and_one_who_fell_earlier_starts_down() {
+        let (mut app, rigs) = playing(
+            &[FigureKind::Farach, FigureKind::Hidalgo],
+            AnimationState::Idle,
+            0.0,
+        );
+        let person = |app: &App, rig: Entity| {
+            let body = app.world().get::<ChildOf>(rig).unwrap().parent();
+            app.world().get::<ChildOf>(body).unwrap().parent()
+        };
+        let of = |kind| rigs.iter().find(|(k, _)| *k == kind).unwrap().1;
+        let (farach, hidalgo) = (of(FigureKind::Farach), of(FigureKind::Hidalgo));
+        let pelvis = |app: &App, rig: Entity| at(app.world(), bone(app.world(), rig, "pelvis")).y;
+        let standing = pelvis(&app, farach);
+        assert!(standing > 0.85, "{standing}");
+        // Farach cae ahora; Don Hidalgo cayó hace rato (un modelo creado o
+        // visto después): empieza tendido.
+        let (him, other) = (person(&app, farach), person(&app, hidalgo));
+        app.world_mut().entity_mut(him).insert(Fallen::default());
+        app.world_mut().entity_mut(other).insert(Fallen::LONG_AGO);
+        for _ in 0..4 {
+            app.update();
+        }
+        assert!(pelvis(&app, hidalgo) < 0.3, "{}", pelvis(&app, hidalgo));
+        assert!(pelvis(&app, farach) > 0.6, "{}", pelvis(&app, farach));
+        // La caída dura 2.4 s; después sigue tendido, sin volver a pararse.
+        for frame in 0..120 {
+            app.update();
+            if frame < 60 {
+                continue;
+            }
+            for rig in [farach, hidalgo] {
+                let world = app.world();
+                let low = ["pelvis", "head", "ball_l", "ball_r", "hand_l", "hand_r"]
+                    .map(|n| at(world, bone(world, rig, n)).y);
+                assert!(low[0] < 0.3 && low[1] < 0.4, "{frame}: {low:?}");
+                assert!(low.iter().all(|y| *y > -0.02), "{frame}: {low:?}");
+            }
+        }
     }
 
     #[test]

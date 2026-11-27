@@ -1,0 +1,10 @@
+# The gringo milico's light-brown hair: short04's strands as grey (see
+# greyscaleTexture in tools/README.md), tinted light brown.
+name milico_gringo_hair
+diffuseColor 0.52 0.40 0.27
+specularColor 0.05 0.05 0.05
+shininess 0.5
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/hair/short04/short04_diffuse.png

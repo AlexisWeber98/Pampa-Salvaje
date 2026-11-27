@@ -129,6 +129,9 @@ pub enum MapIcon {
     /// Una persona del pueblo: no se marca, porque el mapa no muestra dónde
     /// está la gente en tiempo real.
     Walker,
+    /// Alguien que persigue al jugador (la milicada del acto 6): un punto
+    /// azul, fijado en el borde cuando está fuera del mapa.
+    Chaser,
 }
 
 /// Adónde envía el mandado al jugador, marcado en el mapa (fijado en el borde
@@ -620,6 +623,7 @@ fn update_markers(
             }
             // La gente no se marca: nada de posiciones en tiempo real.
             MapIcon::Walker => {}
+            MapIcon::Chaser => markers.chasers.push(at),
         }
     }
     let minimap = &mut *minimap;
@@ -703,6 +707,37 @@ mod tests {
         assert_eq!(data[i + 3], 255, "arrow drawn into the image");
         // Capa base y capa de marcadores.
         assert_eq!(images.len(), 2);
+    }
+
+    #[test]
+    fn marks_the_chasers_and_pins_them_to_the_edge_when_off_the_map() {
+        let mut app = headless_app();
+        let player = GroundVec2::new(12.0, -30.0);
+        let near = player + GroundVec2::new(60.0, 0.0);
+        let far = GroundVec2::new(-3000.0, 0.0);
+        app.world_mut().spawn((
+            MapIcon::Player,
+            Transform::from_translation(crate::world_from_ground(player, 0.0)),
+        ));
+        for at in [near, far] {
+            app.world_mut().spawn((
+                MapIcon::Chaser,
+                Transform::from_translation(crate::world_from_ground(at, 0.0)),
+            ));
+        }
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        let images = app.world().resource::<Assets<Image>>();
+        let data = images.get(&minimap.markers).unwrap().data.as_ref().unwrap();
+        let pixel = |at: Vec2| {
+            let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
+            data[i..i + 4].to_vec()
+        };
+        assert!(minimap.frame.contains(near));
+        assert_eq!(pixel(minimap.frame.to_map(near)), palette::CHASER);
+        let (edge, on_map) = minimap.frame.to_map_clamped(far);
+        assert!(!on_map);
+        assert_eq!(pixel(edge), palette::CHASER);
     }
 
     #[test]

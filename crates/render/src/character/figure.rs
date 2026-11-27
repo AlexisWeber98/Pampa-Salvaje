@@ -27,6 +27,9 @@ pub type Rgb = [u8; 3];
 /// Cuántos aspectos de vecinos hay; el `look` de la lógica elige uno.
 pub const TOWNSFOLK_LOOKS: u8 = 5;
 
+/// Cuántos milicos distintos hay (ver [`FigureKind::Milico`]).
+pub const MILICO_LOOKS: u8 = 3;
+
 /// Cómo se dibuja una figura.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FigureKind {
@@ -44,6 +47,13 @@ pub enum FigureKind {
     /// Juan Bautista Bairoletto, de 25 años en 1919: camisa negra, pañuelo de
     /// cuello blanco, un chambergo claro; parado al lado de Farach.
     Bairoletto,
+    /// Un milico, agente raso de la policía territorial de La Pampa en 1919,
+    /// con el uniforme sencillo del agente (quepí, guerrera azul oscuro con
+    /// una columna de botones, bombacha, botas y cinto de cuero).
+    /// `n % MILICO_LOOKS` elige quién es: el criollo, el gringo joven o el
+    /// veterano de bigote canoso, cada uno con su propia cara y estatura, así
+    /// que una partida de milicos no es una fila de clones.
+    Milico(u8),
 }
 
 impl FigureKind {
@@ -62,6 +72,7 @@ impl FigureKind {
         ]
         .into_iter()
         .chain((0..TOWNSFOLK_LOOKS).map(Self::Townsfolk))
+        .chain((0..MILICO_LOOKS).map(Self::Milico))
     }
 }
 
@@ -980,6 +991,56 @@ const BAIROLETTO: Look = Look {
     ..PAISANO
 };
 
+/// La guerrera, el quepí y la bombacha del agente: el azul de la policía, un
+/// poco más negro que el del comisario.
+const MILICO_BLUE: Rgb = [30, 34, 54];
+
+/// Los milicos, en el orden de [`FigureKind::Milico`]: el mismo uniforme de
+/// agente (sin las insignias del comisario: una sola columna de botones, ni
+/// correa ni rastra negra, un cinto de cuero marrón), con la piel, el pelo y
+/// el bigote de cada uno.
+const MILICOS: [Look; MILICO_LOOKS as usize] = [
+    // El criollo: piel trigueña, pelo y bigote negros.
+    Look {
+        skin: [196, 150, 112],
+        hair: [30, 24, 22],
+        moustache: Some([30, 24, 22]),
+        ..MILICO
+    },
+    // El gringo: joven, rubio castaño y lampiño.
+    Look {
+        skin: [226, 190, 160],
+        hair: [132, 102, 70],
+        moustache: None,
+        ..MILICO
+    },
+    // El veterano: canoso, con un bigote grande y gris.
+    Look {
+        skin: [212, 168, 132],
+        hair: [118, 114, 108],
+        moustache: Some([150, 146, 140]),
+        ..MILICO
+    },
+];
+
+/// El uniforme de agente que comparten los [`MILICOS`].
+const MILICO: Look = Look {
+    coat: MILICO_BLUE,
+    jacket: true,
+    legs: [26, 28, 40],
+    bombacha: true,
+    shoes: [26, 24, 24],
+    tall_boots: true,
+    head: Headwear::Kepi {
+        cloth: MILICO_BLUE,
+        visor: [20, 20, 22],
+    },
+    buttons: Some([204, 166, 70]),
+    neckerchief: None,
+    faja: Some([72, 46, 28]),
+    ..PAISANO
+};
+
 /// `color` un tono más oscuro: costuras, puños, suelas y cuencas de los ojos.
 pub(super) fn darker(color: Rgb) -> Rgb {
     color.map(|c| (c as f32 * 0.78) as u8)
@@ -992,6 +1053,7 @@ fn look(kind: FigureKind) -> &'static Look {
         FigureKind::Hidalgo => &HIDALGO,
         FigureKind::Farach => &FARACH,
         FigureKind::Bairoletto => &BAIROLETTO,
+        FigureKind::Milico(n) => &MILICOS[(n % MILICO_LOOKS) as usize],
     }
 }
 
@@ -1526,13 +1588,23 @@ mod tests {
         let farach = FigureKind::Farach;
         assert!(has(farach, Piece::Kepi) && has(farach, Piece::Button));
         assert_eq!(color_of(farach, Piece::Torso), Some(POLICE_BLUE));
+        let milicos: Vec<_> = (0..MILICO_LOOKS).map(FigureKind::Milico).collect();
         let others: Vec<_> = FigureKind::all()
-            .filter(|k| *k != hidalgo && *k != farach)
+            .filter(|k| *k != hidalgo && *k != farach && !milicos.contains(k))
             .collect();
         for kind in others {
             assert_ne!(figure_parts(kind), figure_parts(hidalgo));
             assert_ne!(figure_parts(kind), figure_parts(farach));
             assert!(!has(kind, Piece::Kepi) && !has(kind, Piece::Buckle));
+        }
+        // Los milicos llevan quepí y botones como Farach, pero no son él ni
+        // clones entre sí.
+        for (k, &milico) in milicos.iter().enumerate() {
+            assert!(has(milico, Piece::Kepi) && has(milico, Piece::Button));
+            assert_ne!(figure_parts(milico), figure_parts(farach));
+            for &other in &milicos[k + 1..] {
+                assert_ne!(figure_parts(milico), figure_parts(other));
+            }
         }
     }
 

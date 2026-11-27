@@ -117,11 +117,16 @@ La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
   `Talk(Bairoletto)` (hablarle con `F`, al alcance; la escena de Bairoletto
   empieza sola cuando el jugador llega a pie por la vereda a la puerta abierta
   de La Colonia: entra tímido, mira el lugar, Bairoletto lo llama y va hasta su
-  mesa), o `TakeHorse` (montar el caballo de Don Hidalgo, que desde
-  entonces es del jugador y le enseña a montar).
+  mesa), `TakeHorse` (montar el caballo de Don Hidalgo, que desde
+  entonces es del jugador y le enseña a montar), `Rendezvous` (acto 6: de
+  20 a 6, Bairoletto espera parado en la vereda frente a la puerta de La
+  Colonia; la escena empieza sola cuando el jugador llega a caballo a menos de
+  7 m de él; a pie no) o `Hideout` (llegar a menos de 30 m del monte más
+  cercano al pueblo de la comisaría; empieza solo al llegar).
 - `objective` es la línea del objetivo del HUD mientras el paso está pendiente
   (como máximo 48 caracteres); `{town}` se reemplaza por `police_town`. El
-  minimapa marca a quien hay que hablarle o al caballo. Puede faltar: un paso
+  minimapa marca a quien hay que hablarle, el caballo, la puerta de La Colonia
+  o el monte. Puede faltar: un paso
   sin `objective` es un paso sin aviso, sin línea en el HUD ni marca en el
   minimapa. Escrito, no puede estar en blanco.
 - `scene` es lo que sucede al cumplir el paso (puede faltar). Mientras dura, el
@@ -135,6 +140,13 @@ La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
     de presentación de Don Hidalgo, o `Cheese`, el pedazo de queso del Viejo
     Amadeo. Lo entregado no vuelve. No se ve en la mano: solo se lleva.
   Las acciones suceden al instante, entre una línea y la siguiente.
+  - Indicaciones de escena, que la escena espera antes de seguir: `Enter`
+    (Bairoletto entra a la pulpería y se pierde adentro), `Pause(4)` (cuatro
+    segundos sin que nadie hable), `Caption("[Un disparo]")` (algo que se oye,
+    como subtítulo sin nombre; se valida como una línea), `RunToHorse`
+    (Bairoletto sale corriendo y se sube en ancas), `GetOff` (se baja de las
+    ancas, una vez frenado el caballo) y `Leave` (se aleja caminando y se
+    pierde de vista).
 - Lo que `historia` cita se copia palabra por palabra; lo narrado se vuelve
   acciones. Una línea larga se corta en varias `Say` seguidas del mismo
   personaje, en un punto o una coma, sin cambiar ninguna palabra.
@@ -144,6 +156,14 @@ La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
   momento del juego, y no mueve la historia; Lisandro se le acerca solo antes
   de la primera línea. Sus líneas se validan como las de los pasos. Ningún paso
   puede pedir `Talk(Amadeo)`.
+- `bring_the_horse` lo dice Bairoletto cuando el jugador llega a pie (a menos
+  de 7 m) a la puerta de La Colonia mientras lo espera de noche: que traiga el
+  caballo. Se repite cada vez que el jugador vuelve a acercarse a pie. Puede
+  faltar (entonces no dice nada); sus líneas se validan como las de los pasos.
+- `chase_yells` lo grita Bairoletto en ancas durante la persecución del acto
+  6: una línea por cada tiro suyo, en orden, cada una una sola vez por huida
+  (si en ese momento ya hay otra línea en pantalla, espera al tiro siguiente).
+  Puede faltar; sus líneas se validan como las de los pasos.
 - `not_your_horse` lo dice el jugador cuando intenta usar el caballo antes de
   que Don Hidalgo se lo preste (no detiene al jugador).
 - `police_town` es el pueblo de la comisaría, por su nombre en
@@ -164,7 +184,7 @@ los tests leen las líneas de este archivo y comprueban que el juego las muestre
 tal como están escritas. Lo que sí comprueban es la forma de la historia: el
 orden de los pasos, quién habla en cada escena y qué se da o se entrega (la
 carta, la plata, el queso). Si se cambia eso, hay que cambiar también el test
-`the_shipped_file_tells_acts_two_to_four_in_order_and_amadeo_apart` de
+`the_shipped_file_tells_acts_two_to_six_in_order_and_amadeo_apart` de
 `crates/content/src/errand.rs`.
 
 Los campos que el juego todavía no conoce (por ejemplo, un futuro grupo por

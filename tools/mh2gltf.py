@@ -1067,9 +1067,13 @@ def greyscale(img):
 # --- PNG ----------------------------------------------------------------------
 
 
+# Adam7's seven passes: (x start, y start, x step, y step).
+ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+
+
 def png_decode(path):
-    """An 8-bit PNG (grey, RGB, palette, grey+alpha, RGBA; not interlaced)
-    as an (h, w, channels) uint8 array."""
+    """An 8- or 16-bit PNG (grey, RGB, palette, grey+alpha, RGBA; plain or
+    Adam7-interlaced) as an (h, w, channels) uint8 array."""
     data = read_bytes(path, 64 * 1024 * 1024)
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ConvertError(f"{os.path.basename(path)} is not a PNG")
@@ -1093,17 +1097,29 @@ def png_decode(path):
         raise ConvertError(f"{os.path.basename(path)} has no header")
     w, h, depth, colour, _, _, interlace = header
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
-    if depth not in (8, 16) or channels is None or interlace != 0 or not 0 < w * h <= MAX_IMAGE_PIXELS:
-        raise ConvertError(f"{os.path.basename(path)}: unsupported PNG (8- or 16-bit, non-interlaced only)")
+    if depth not in (8, 16) or channels is None or interlace not in (0, 1) or not 0 < w * h <= MAX_IMAGE_PIXELS:
+        raise ConvertError(f"{os.path.basename(path)}: unsupported PNG (8- or 16-bit only)")
     if depth == 16 and colour == 3:
         raise ConvertError(f"{os.path.basename(path)}: a 16-bit palette is not a PNG")
     size = depth // 8
-    stride = w * channels * size
-    expected = (stride + 1) * h
+    bpp = channels * size
+    # Interlaced, the image is seven smaller ones one after the other (the
+    # empty ones left out), each filtered on its own.
+    passes = [(0, 0, 1, 1)] if interlace == 0 else ADAM7
+    shapes = [((h - y0 + dy - 1) // dy, (w - x0 + dx - 1) // dx) for x0, y0, dx, dy in passes]
+    expected = sum((pw * bpp + 1) * ph for ph, pw in shapes if ph and pw)
     raw = zlib.decompressobj().decompress(b"".join(idat), expected + 1)
     if len(raw) != expected:
         raise ConvertError(f"{os.path.basename(path)}: truncated image data")
-    img = unfilter(np.frombuffer(raw, np.uint8).reshape(h, stride + 1), h, w, channels * size)
+    raw = np.frombuffer(raw, np.uint8)
+    img = np.zeros((h, w, bpp), np.uint8)
+    at = 0
+    for (x0, y0, dx, dy), (ph, pw) in zip(passes, shapes):
+        if not (ph and pw):
+            continue
+        rows = raw[at : at + (pw * bpp + 1) * ph].reshape(ph, pw * bpp + 1)
+        at += rows.size
+        img[y0::dy, x0::dx] = unfilter(rows, ph, pw, bpp)
     if size == 2:
         # Filters work on bytes, a pixel's bpp bytes apart; keep the high
         # byte of each 16-bit sample.

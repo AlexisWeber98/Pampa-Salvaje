@@ -63,12 +63,19 @@ pub struct PulperiaDoor {
     pub shut: bool,
 }
 
+/// La pulpería del pueblo `.0` no cierra aunque sea de noche: la escena del
+/// acto 6 la mantiene abierta mientras Bairoletto entra y sale corriendo
+/// ([`crate::escape`]).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HeldOpen(pub Option<usize>);
+
 pub struct PulperiaPlugin;
 
 impl Plugin for PulperiaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PulperiaDoors>()
             .init_resource::<PulperiaShut>()
+            .init_resource::<HeldOpen>()
             .init_resource::<Subtitle>()
             .init_resource::<KnockHint>()
             .init_resource::<Typefaces>()
@@ -85,7 +92,7 @@ impl Plugin for PulperiaPlugin {
 }
 
 /// Cierra la puerta de cada pulpería de noche, cuando el jugador no queda
-/// adentro, y la abre de día: en la colisión del mundo y, por pueblo, en
+/// adentro (ni la tiene abierta una escena, [`HeldOpen`]), y la abre de día: en la colisión del mundo y, por pueblo, en
 /// [`PulperiaShut`], que render sigue para mover las hojas.
 fn shut_at_night(
     clock: Option<Res<WorldClock>>,
@@ -93,7 +100,9 @@ fn shut_at_night(
     world: Option<ResMut<GameWorld>>,
     players: Query<&Player>,
     (mut doors, mut shared): (ResMut<PulperiaDoors>, ResMut<PulperiaShut>),
+    held: Option<Res<HeldOpen>>,
 ) {
+    let held = held.and_then(|h| h.0);
     let (Some(towns), Some(mut world)) = (towns, world) else {
         return;
     };
@@ -124,7 +133,8 @@ fn shut_at_night(
     let night = clock.is_some_and(|c| !is_open(c.0.time_of_day()));
     let at = players.single().ok().map(|p| p.rider.position);
     for door in &mut doors.0 {
-        let want = night && !at.is_some_and(|p| door.inside.holds(p));
+        let kept = held == Some(door.town) && !door.almacen;
+        let want = night && !kept && !at.is_some_and(|p| door.inside.holds(p));
         if want == door.shut {
             continue;
         }

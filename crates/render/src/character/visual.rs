@@ -25,7 +25,7 @@ use super::rider::{
     OnBench, Riding, carry_stirrups, pose_riders, seat_pillions, seat_riders, seat_transform,
     spawn_riders,
 };
-use super::rig::{drive_rigs, fit_rigs};
+use super::rig::{count_fallen, drive_rigs, fit_rigs};
 use super::tack::{PendingTack, TackBuilt, dress_pending, dress_tack, load_recado, stretch_straps};
 use super::townsfolk::TintCache;
 use super::viewer::mark_viewer_head;
@@ -105,6 +105,7 @@ impl Plugin for CharacterVisualPlugin {
                     load_character_clips,
                     load_recado,
                     super::pastime::make_kit,
+                    super::gunfire::make_gun_kit,
                 ),
             )
             .add_systems(
@@ -121,7 +122,7 @@ impl Plugin for CharacterVisualPlugin {
                 )
                     .chain(),
             )
-            .add_systems(Update, super::pastime::hold_things)
+            .add_systems(Update, (super::pastime::hold_things, count_fallen))
             .add_systems(
                 PostUpdate,
                 (super::pastime::drift_smoke, super::pastime::tilt_glasses)
@@ -137,14 +138,24 @@ impl Plugin for CharacterVisualPlugin {
             .add_systems(PostUpdate, fade_people.after(attach_visuals))
             .add_systems(
                 PostUpdate,
-                (fit_rigs, fit_horses, ground_horses, pose_riders)
+                (
+                    fit_rigs,
+                    fit_horses,
+                    ground_horses,
+                    pose_riders,
+                    super::rider::aim_shooters,
+                )
                     .chain()
                     .after(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
             .add_systems(
                 PostUpdate,
-                (carry_stirrups, stretch_straps)
+                (
+                    carry_stirrups,
+                    stretch_straps,
+                    super::gunfire::hold_revolvers,
+                )
                     .chain()
                     .after(TransformSystems::Propagate)
                     .before(VisibilitySystems::VisibilityPropagate),

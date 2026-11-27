@@ -68,10 +68,13 @@ pub enum Clip {
     /// Sentado, llevándose el cigarrillo de la mano derecha a la boca una vez
     /// cada tanto, los dedos cruzando la boca: el que fuma.
     SitSmoke,
+    /// Cae de espaldas y queda tendido en el piso: se reproduce una vez y se
+    /// queda en su última pose (ver [`Fallen`](super::rig::Fallen)).
+    Death,
 }
 
 impl Clip {
-    pub const COUNT: usize = 20;
+    pub const COUNT: usize = 21;
 
     /// Todos los clips, en el orden del archivo.
     pub const ALL: [Self; Self::COUNT] = [
@@ -95,6 +98,7 @@ impl Clip {
         Self::SitTalk,
         Self::SitDrink,
         Self::SitSmoke,
+        Self::Death,
     ];
 
     /// El nombre del clip en el archivo.
@@ -120,6 +124,7 @@ impl Clip {
             Self::SitTalk => "sit_talk",
             Self::SitDrink => "sit_drink",
             Self::SitSmoke => "sit_smoke",
+            Self::Death => "death",
         }
     }
 

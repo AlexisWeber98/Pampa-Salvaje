@@ -50,7 +50,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 
 use super::clips::CharacterClips;
-use super::figure::{FigureBody, FigureJoint, FigureKind};
+use super::figure::{FigureBody, FigureJoint, FigureKind, MILICO_LOOKS};
 use super::horse::rest_affine;
 use super::rider::{RiderMotion, Riding, Seated};
 use super::rig::{Rig, bind_targets, rest_frame};
@@ -71,8 +71,16 @@ pub fn model_name(kind: FigureKind) -> Option<&'static str> {
         FigureKind::Farach => Some("farach"),
         FigureKind::Bairoletto => Some("bairoletto"),
         FigureKind::Townsfolk(look) => Some(outfit(look)),
+        FigureKind::Milico(n) => Some(MILICOS[(n % MILICO_LOOKS) as usize]),
     }
 }
+
+/// Las carpetas de los milicos, en el orden de [`FigureKind::Milico`]: el
+/// criollo, el gringo joven y el veterano. Cada uno es su propio modelo de
+/// MakeHuman con el mismo uniforme (`assets/characters/milico/`), así que
+/// difieren en la cara, el cuerpo y la estatura, no solo en un color.
+pub const MILICOS: [&str; MILICO_LOOKS as usize] =
+    ["milico/criollo", "milico/gringo", "milico/viejo"];
 
 /// El archivo del modelo `name` bajo el [`CHARACTER_DIR`].
 pub fn model_path(name: &str) -> String {
@@ -374,6 +382,7 @@ pub(crate) mod tests {
         for name in ["hidalgo", "farach", "bairoletto", "protagonist"]
             .into_iter()
             .chain(townsfolk)
+            .chain(MILICOS)
         {
             let model = shipped_model(name);
             assert_eq!(model.skins().count(), 1, "{name}");

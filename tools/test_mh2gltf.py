@@ -28,9 +28,24 @@ DATA = os.path.realpath(os.path.expanduser(os.environ.get("MAKEHUMAN_DATA") or m
 HAVE_DATA = np is not None and os.path.isfile(os.path.join(DATA, "targets.npz"))
 
 
-def png_with_filters(img, kinds):
+# Adam7's passes: (x start, y start, x step, y step).
+ADAM7 = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+
+
+def png_with_filters(img, kinds, interlaced=False):
     """A PNG of img whose rows use the given filter types, encoded by hand
-    (independently of png_encode)."""
+    (independently of png_encode); interlaced, its seven Adam7 passes one
+    after the other, each filtered on its own."""
+    if interlaced:
+        passes = [img[y0::dy, x0::dx] for x0, y0, dx, dy in ADAM7]
+        data = b"".join(filtered_rows(p, kinds) for p in passes if p.size)
+    else:
+        data = filtered_rows(img, kinds)
+    return png_file(img.shape, data, interlaced)
+
+
+def filtered_rows(img, kinds):
+    """img's rows, each with its filter type byte and filtered by it."""
     h, w, c = img.shape
     out = bytearray()
     prev = [0] * (w * c)
@@ -57,6 +72,12 @@ def png_with_filters(img, kinds):
             line.append((row[x] - pred) & 255)
         out += line
         prev = row
+    return bytes(out)
+
+
+def png_file(shape, data, interlaced=False):
+    """A PNG of an (h, w, channels) image from its filtered rows."""
+    h, w, c = shape
 
     def chunk(kind, body):
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
@@ -64,8 +85,8 @@ def png_with_filters(img, kinds):
     colour = {1: 0, 2: 4, 3: 2, 4: 6}[c]
     return (
         b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, colour, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(bytes(out)))
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, colour, 0, 0, int(interlaced)))
+        + chunk(b"IDAT", zlib.compress(data))
         + chunk(b"IEND", b"")
     )
 
@@ -89,6 +110,17 @@ class Units(unittest.TestCase):
             for kinds in ([0, 1, 2], [3, 4], [4, 0, 3, 1, 2]):
                 path = self.write("f.png", png_with_filters(img, kinds))
                 np.testing.assert_array_equal(mh2gltf.png_decode(path), img, f"{channels} {kinds}")
+
+    def test_interlaced_pngs_are_put_back_together_from_their_seven_passes(self):
+        # Some community assets ship Adam7 PNGs (the viking moustache, a few
+        # eyebrows). Sizes that leave some passes empty, or one pixel wide.
+        rng = np.random.default_rng(11)
+        for h, w in ((9, 13), (1, 1), (2, 5), (16, 16)):
+            for channels in (1, 4):
+                img = rng.integers(0, 256, (h, w, channels), dtype=np.uint8)
+                for kinds in ([0], [4, 1, 3, 2]):
+                    path = self.write("i.png", png_with_filters(img, kinds, interlaced=True))
+                    np.testing.assert_array_equal(mh2gltf.png_decode(path), img, f"{h}x{w} {channels} {kinds}")
 
     def test_png_encoding_round_trips(self):
         rng = np.random.default_rng(3)

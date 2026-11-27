@@ -19,6 +19,8 @@
 //!   estaba);
 //! - `goto X Y`: un punto, en metros del juego;
 //! - `horse`: un caballo ensillado junto al jugador;
+//! - `milico`: un milico a caballo, quieto, junto al jugador; cada vez el
+//!   siguiente de los tres ([`FigureKind::Milico`]), para mirarlos;
 //! - `buck` / `buck 2` / `buck 3`: el caballo ensillado sin jinete más cercano
 //!   (a hasta [`BUCK_RANGE`] metros) corcovea una vez con `Buck_1`, `Buck_2` o
 //!   `Buck_3` ([`HorseBuck`]), el corcovo que usará el amansado;
@@ -65,8 +67,8 @@ use pampa_render::character::{CharacterModels, HorseBuck};
 use pampa_render::fauna::livestock::Clip;
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::{
-    CharacterModelsShown, CharacterVisual, Coat, FigureKind, Pillion, StreamFocus, Typefaces,
-    VisualPose, WorldClock, WorldFlora, WorldSettlements, WorldTowns, world_from_ground,
+    CharacterModelsShown, CharacterVisual, Coat, FigureKind, MILICO_LOOKS, Pillion, StreamFocus,
+    Typefaces, VisualPose, WorldClock, WorldFlora, WorldSettlements, WorldTowns, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked};
@@ -90,7 +92,7 @@ const SEARCH: f32 = 300.0;
 pub const BUCK_RANGE: f32 = 30.0;
 
 /// Lo que la consola enumera con `help`.
-pub const HELP: [&str; 16] = [
+pub const HELP: [&str; 17] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
     "goto gato, puma, yaguarete: face the nearest",
@@ -100,6 +102,7 @@ pub const HELP: [&str; 16] = [
     "fauna: the animals nearby",
     "unlock all: every ability",
     "money N: N more pesos, as in money 2,50",
+    "milico: a mounted milico alongside",
     "pillion on, off: Bairoletto rides behind",
     "models on, off: MakeHuman or old figures",
     "time HH or HH:MM: move the clock on",
@@ -121,6 +124,9 @@ pub fn is_toggle(keys: &ButtonInput<KeyCode>) -> bool {
 pub enum Command {
     Goto(Destination),
     Horse,
+    /// Un milico a caballo, quieto, junto al jugador: el siguiente de los
+    /// tres cada vez.
+    Milico,
     /// El caballo ensillado más cercano corcovea con este clip, uno de
     /// [`Clip::BUCKS`].
     Buck(Clip),
@@ -189,6 +195,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
     match words.as_slice() {
         ["help"] => Ok(Command::Help),
         ["horse"] => Ok(Command::Horse),
+        ["milico"] => Ok(Command::Milico),
         ["buck"] => Ok(Command::Buck(Clip::Buck)),
         ["buck", "1"] => Ok(Command::Buck(Clip::Buck)),
         ["buck", "2"] => Ok(Command::Buck(Clip::Buck2)),
@@ -837,6 +844,29 @@ fn run_entered(
                 }
                 None => console.print("no room for a horse"),
             },
+            Command::Milico if aboard => console.print("not on the train: get off first"),
+            Command::Milico => match milico_beside(rider, &world.0) {
+                Some(horse) => {
+                    *horses += 1;
+                    world.0.obstacles.push(horse.footprint);
+                    let height = world.0.ground_height(horse.position);
+                    let look = (*horses % u32::from(MILICO_LOOKS)) as u8;
+                    commands.spawn((
+                        Name::new(format!("Console milico {}", *horses)),
+                        CharacterVisual::Mounted {
+                            rider: FigureKind::Milico(look),
+                            coat: Coat::seeded(*horses),
+                        },
+                        VisualPose {
+                            heading: horse.heading,
+                            ..default()
+                        },
+                        Transform::from_translation(world_from_ground(horse.position, height)),
+                    ));
+                    console.print("a mounted milico alongside");
+                }
+                None => console.print("no room for a milico"),
+            },
             Command::Buck(clip) => {
                 let near = saddled
                     .iter()
@@ -879,6 +909,23 @@ pub fn horse_beside(rider: &Rider, world: &World) -> Option<TetheredHorse> {
     let clear = body.radius + rider.collider.radius;
     let spot = world.clear_spot(body, rider.position + left * (clear + 0.5), 30.0)?;
     (spot.distance(rider.position) >= clear).then(|| TetheredHorse::standing(spot, rider.heading))
+}
+
+/// Dónde se para un milico a caballo junto al jugador: como [`horse_beside`],
+/// pero si ese lugar ya está ocupado (otro milico), cada vez un largo de
+/// caballo más atrás, en fila.
+pub fn milico_beside(rider: &Rider, world: &World) -> Option<TetheredHorse> {
+    let ahead = rider.heading.forward();
+    let left = GroundVec2::new(-ahead.y, ahead.x);
+    let body = Circle::new(TetheredHorse::LENGTH / 2.0 + 0.2);
+    let clear = body.radius + rider.collider.radius;
+    (0..8).find_map(|k| {
+        let near =
+            rider.position + left * (clear + 0.5) - ahead * (k as f32 * (body.radius * 2.0 + 0.5));
+        let spot = world.clear_spot(body, near, 3.0)?;
+        (spot.distance(rider.position) >= clear)
+            .then(|| TetheredHorse::standing(spot, rider.heading))
+    })
 }
 
 /// El panel de la consola, oculto, abajo a la izquierda.
@@ -950,6 +997,7 @@ mod tests {
         assert_eq!(parse("models off"), Ok(Command::Models(false)));
         assert!(parse("models").unwrap_err().contains("usage"));
         assert_eq!(parse("  Horse "), Ok(Command::Horse));
+        assert_eq!(parse("Milico"), Ok(Command::Milico));
         assert_eq!(parse("buck"), Ok(Command::Buck(Clip::Buck)));
         assert_eq!(parse("buck 1"), Ok(Command::Buck(Clip::Buck)));
         assert_eq!(parse("Buck 2"), Ok(Command::Buck(Clip::Buck2)));
@@ -1068,6 +1116,8 @@ mod tests {
             parse("goto 1 x").unwrap_err(),
             ": goto 12 -3.5-".into(),
             "not on the train: get off first".into(),
+            "a mounted milico alongside".into(),
+            "no room for a milico".into(),
             "everything unlocked".into(),
             "it is 21:00".into(),
             "no clock".into(),
@@ -1479,6 +1529,49 @@ mod tests {
         let me = rider(&mut app);
         assert_eq!(me.travel(), Travel::Riding);
         assert_eq!(me.position, horse.position);
+    }
+
+    #[test]
+    fn milico_puts_a_mounted_milico_alongside_a_different_one_each_time() {
+        let mut app = app();
+        enter(&mut app, "goto 100 -200");
+        let milicos = |app: &mut App| {
+            let world = app.world_mut();
+            let mut q = world.query::<(&CharacterVisual, &Transform)>();
+            q.iter(world)
+                .filter_map(|(v, t)| match *v {
+                    CharacterVisual::Mounted {
+                        rider: FigureKind::Milico(n),
+                        ..
+                    } => Some((n, t.translation)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        for _ in 0..pampa_render::MILICO_LOOKS {
+            enter(&mut app, "milico");
+            assert_eq!(last_line(&app), "a mounted milico alongside");
+        }
+        let me = rider(&mut app);
+        let here = world_from_ground(me.position, 0.0);
+        let found = milicos(&mut app);
+        let mut looks: Vec<u8> = found
+            .iter()
+            .map(|(n, _)| n % pampa_render::MILICO_LOOKS)
+            .collect();
+        looks.sort();
+        looks.dedup();
+        assert_eq!(
+            looks.len(),
+            pampa_render::MILICO_LOOKS as usize,
+            "{found:?}"
+        );
+        for (_, at) in found {
+            assert!(
+                at.with_y(0.0).distance(here.with_y(0.0)) < 40.0,
+                "{at} from {here}"
+            );
+        }
     }
 
     fn pillion(app: &mut App) -> Option<Pillion> {

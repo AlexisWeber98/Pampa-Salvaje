@@ -1,0 +1,43 @@
+# A milico (agent of the territorial police of La Pampa) in 1919, the
+# gringo: a son of immigrants of about 23 (age 0.46), new to the force,
+# slight, fair and clean-shaven, a narrow face, blue eyes and light-brown
+# hair (hair.mhmat), about 1.66 m. The agent's plain uniform, the same
+# for the three milicos (see ../criollo/criollo.mhm).
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece (see ../../README.md). Credits in
+# ../../CREDITS.md.
+version v1.1.1
+name milico_gringo
+modifier macrodetails/Gender 1.000000
+modifier macrodetails/Age 0.455000
+modifier macrodetails/African 0.000000
+modifier macrodetails/Asian 0.000000
+modifier macrodetails/Caucasian 1.000000
+modifier macrodetails-universal/Muscle 0.450000
+modifier macrodetails-universal/Weight 0.250000
+modifier macrodetails-height/Height 0.360000
+modifier macrodetails-proportions/BodyProportions 0.500000
+modifier head/head-oval 0.500000
+modifier chin/chin-width-decr|incr -0.300000
+modifier nose/nose-scale-vert-decr|incr 0.300000
+modifier nose/nose-point-width-decr|incr -0.300000
+modifier cheek/l-cheek-volume-decr|incr -0.300000
+modifier cheek/r-cheek-volume-decr|incr -0.300000
+skeleton game_engine.mhskel
+skinMaterial skins/young_caucasian_male/young_caucasian_male.mhmat
+proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/lightblue.mhmat
+eyebrows eyebrow001 9c81ec3a-faa5-4c94-9cdb-992300ba3084
+material eyebrow001 9c81ec3a-faa5-4c94-9cdb-992300ba3084 eyebrows.mhmat
+hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
+material short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8 hair.mhmat
+clothesHideFaces True
+subdivide False
+piece bombacha color=0.10,0.11,0.16 top=4.3 bottom=1.3
+piece boots color=0.05,0.05,0.05 top=2.05
+piece jacket color=0.08,0.09,0.15 top=6.5 vneck=0 skirt=3.0 open=0
+piece rastra color=0.20,0.12,0.06 coin=0.72,0.58,0.30 coins=0 height=0.2
+piece kepi color=0.08,0.09,0.15
+piece buttons count=5 spread=0

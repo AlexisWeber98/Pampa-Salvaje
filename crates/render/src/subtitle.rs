@@ -122,6 +122,8 @@ fn update_subtitle(
         return;
     }
     let (speaker, text) = match &subtitle.0 {
+        // Sin nombre: algo que se oye, entre corchetes.
+        Some(line) if line.speaker.is_empty() => (String::new(), line.text.clone()),
         Some(line) => (format!("{}: ", line.speaker), line.text.clone()),
         None => (String::new(), String::new()),
     };
@@ -201,6 +203,17 @@ mod tests {
             .find(|n| n.bottom == Val::Percent(BOTTOM))
             .expect("the subtitle sits near the bottom edge");
         assert_eq!(root.justify_content, JustifyContent::Center);
+
+        // Algo que se oye: sin nombre delante.
+        app.world_mut().resource_mut::<Subtitle>().0 = Some(SubtitleLine {
+            speaker: String::new(),
+            text: "[Un disparo]".into(),
+        });
+        app.update();
+        assert_eq!(
+            shown(&mut app),
+            (String::new(), "[Un disparo]".into(), Display::Flex)
+        );
 
         app.world_mut().resource_mut::<Subtitle>().0 = None;
         app.update();

@@ -1,0 +1,9 @@
+# The criollo milico's black moustache: the black moustache as shipped, its
+# strands cut out by their alpha.
+name milico_criollo_moustache
+diffuseColor 0.5 0.47 0.44
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+diffuseTexture data/clothes/grinsegold_moustache/Moustache_black_diff.png
